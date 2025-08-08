@@ -1,0 +1,534 @@
+@page "/"
+@using System.Text
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using MudBlazor
+@using DocToJson.Shared
+@using DocToJson.Client.Services
+@using DocToJson.Client.Data
+
+<PageTitle>File(s) → JSON</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="mt-6">
+    <MudToolBar>
+    <MudText Typo="Typo.h5">File(s) → JSON</MudText>
+    
+    <MudSpacer/>
+        <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ClearAll" Disabled="@IsBusy"
+                   EndIcon="@Icons.Material.Filled.Refresh">Reset All
+        </MudButton>
+    </MudToolBar>
+
+    <MudStack Spacing="2">
+        <MudText Typo="Typo.h6">Extra instructions</MudText>
+
+        <MudPaper Class="pa-3">
+            <MudTextField @bind-Value="Prompt"
+                          Label="Custom Prompt"
+                          Placeholder="E.g. Calculate unit price if only line total + quantity provided"
+                          Variant="Variant.Text"
+                          Lines="3"
+                          Clearable="true"/>
+        </MudPaper>
+
+        <MudText Typo="Typo.h6">Force output to conform to schema (Optional)</MudText>
+        <SchemaBuilder @bind-Value="Schema"/>
+
+        <MudText Typo="Typo.h6">Select Files</MudText>
+
+        <MudExpansionPanels MultiExpansion>
+            <MudExpansionPanel Text="Upload & Actions" Expanded>
+                <MudFileUpload T="IReadOnlyList<IBrowserFile>"
+                               @ref="_fileUpload"
+                               AppendMultipleFiles
+                               OnFilesChanged="OnInputFilesChanged"
+                               Hidden="false"
+                               InputClass="absolute mud-width-full mud-height-full overflow-hidden z-10"
+                               InputStyle="opacity:0"
+                               Accept=".pdf,.docx,.doc,.csv,.txt,.xlsx,.xls,.json,.png,.jpg,.jpeg,.xml"
+                               @ondragenter="SetDragClass"
+                               @ondragleave="ClearDragClass"
+                               @ondragend="ClearDragClass"
+                               @ondrop="ClearDragClass"
+                >
+                    <ActivatorContent>
+                        <MudPaper Height="100px" Outlined="true" Class="@_dragClass">
+                            <MudText Typo="Typo.h6">Drop files here or click to select</MudText>
+                        </MudPaper>
+                    </ActivatorContent>
+                </MudFileUpload>
+
+                @if (_files.Count > 0)
+                {
+                    foreach (var f in _files)
+                    {
+                        <MudText>@(f.Name) (@(f.Size) bytes)</MudText>
+                    }
+                }
+
+                <MudToolBar WrapContent Class="mt-2">
+                    <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SendAsync"
+                               Disabled="@(_files.Count == 0 || IsBusy)" EndIcon="@Icons.Material.Filled.Send">
+                        Send Request
+                    </MudButton>
+
+                    <MudButton Color="Color.Error" Variant="Variant.Outlined" OnClick="CancelRequest"
+                               Disabled="@(!_canCancel)" StartIcon="@Icons.Material.Filled.Cancel">
+                        Cancel
+                    </MudButton>
+                </MudToolBar>
+
+                @if (IsBusy)
+                {
+                    <MudProgressCircular Indeterminate Color="Color.Primary" Size="Size.Large" Class="mt-2"/>
+                }
+            </MudExpansionPanel>
+
+            <MudExpansionPanel Text="Preview (first file)">
+                @switch (Preview)
+                {
+                    case PreviewType.Pdf:
+                        <iframe src="@PreviewDataUrl" style="width:100%; height:75vh; border:none;"></iframe>
+                        break;
+                    case PreviewType.Image:
+                        <img src="@PreviewDataUrl" style="max-width:100%; height:auto; border:0;"/>
+                        break;
+                    case PreviewType.Text:
+                        <MudPaper Elevation="0" Class="pa-2">
+                            <pre style="white-space:pre-wrap; margin:0">@PreviewText</pre>
+                        </MudPaper>
+                        break;
+                    case PreviewType.Unsupported:
+                        <MudAlert Severity="Severity.Info" Elevation="0">@PreviewMessage</MudAlert>
+                        break;
+                    default:
+                        <MudText Color="Color.Secondary">No file selected.</MudText>
+                        break;
+                }
+            </MudExpansionPanel>
+
+            <MudText Typo="Typo.h6">Response</MudText>
+
+            <MudExpansionPanel Expanded Text="Latest Result">
+                @if (!string.IsNullOrEmpty(Error))
+                {
+                    <MudAlert Severity="Severity.Error" Elevation="0">
+                        <pre style="white-space:pre-wrap; margin:0">@Pretty(Error)</pre>
+                    </MudAlert>
+                }
+                @if (!string.IsNullOrEmpty(Data))
+                {
+                    <MudPaper Elevation="0" Class="pa-2 mt-2">
+                        <pre style="white-space:pre-wrap; margin:0">@Pretty(Data)</pre>
+                    </MudPaper>
+                }
+            </MudExpansionPanel>
+
+            <MudExpansionPanel Text="History">
+                <MudStack Row AlignItems="AlignItems.Center" Spacing="1">
+                    <MudSpacer/>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Default" OnClick="ClearHistoryAsync"
+                               Disabled="@(IsBusy || _history.Count == 0)" EndIcon="@Icons.Material.Filled.History">
+                        Clear History
+                    </MudButton>
+                </MudStack>
+
+                <MudExpansionPanels>
+                    @foreach (var h in _history)
+                    {
+                        <MudExpansionPanel>
+                            <TitleContent>
+                                <MudToolBar>
+                                    <MudText>@h.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                                    <MudText Class="ml-2">@string.Join(", ", h.FileNames)</MudText>
+                                    <MudText Class="ml-2">@(
+                                        !string.IsNullOrWhiteSpace(h.SchemaValidationErrors) ? "Schema invalid" :
+                                        !string.IsNullOrWhiteSpace(h.SubmissionError) ? "Error" :
+                                        !string.IsNullOrWhiteSpace(h.ResponseJson) ? "Success" : "Blank"
+                                        )</MudText>
+                                    <MudSpacer/>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                                   OnClick="@(() => DeleteHistoryAsync(h.Id))"/>
+                                </MudToolBar>
+                            </TitleContent>
+                            <ChildContent>
+                                <MudPaper Class="pa-3 my-2">
+                                    <MudText Typo="Typo.subtitle2">Prompt</MudText>
+                                    <pre style="white-space:pre-wrap; margin:0">@h.Prompt</pre>
+
+                                    <MudText Typo="Typo.subtitle2" Class="mt-2">Schema</MudText>
+                                    <pre style="white-space:pre-wrap; margin:0">@Pretty(h.Schema)</pre>
+
+                                    @if (!string.IsNullOrWhiteSpace(h.SchemaValidationErrors))
+                                    {
+                                        <MudAlert Severity="Severity.Warning" Class="mt-2" Elevation="0">
+                                            <pre style="white-space:pre-wrap; margin:0">@h.SchemaValidationErrors</pre>
+                                        </MudAlert>
+                                    }
+
+                                    @if (!string.IsNullOrWhiteSpace(h.SubmissionError))
+                                    {
+                                        <MudAlert Severity="Severity.Error" Class="mt-2" Elevation="0">
+                                            <pre style="white-space:pre-wrap; margin:0">@Pretty(h.SubmissionError)</pre>
+                                        </MudAlert>
+                                    }
+
+                                    @if (!string.IsNullOrWhiteSpace(h.ResponseJson))
+                                    {
+                                        <MudText Typo="Typo.subtitle2" Class="mt-2">Response</MudText>
+                                        <MudPaper Class="pa-2">
+                                            <pre style="white-space:pre-wrap; margin:0">@Pretty(h.ResponseJson)</pre>
+                                        </MudPaper>
+                                    }
+                                </MudPaper>
+                            </ChildContent>
+                        </MudExpansionPanel>
+                    }
+                </MudExpansionPanels>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    </MudStack>
+</MudContainer>
+
+@code {
+    [Inject] HttpClient Http { get; set; } = default!;
+    [Inject] HistoryService History { get; set; } = default!;
+
+    // drag/drop
+    MudFileUpload<IReadOnlyList<IBrowserFile>>? _fileUpload;
+    const string DefaultDragClass = "relative rounded-lg border-2 border-dashed pa-4 mt-4 mud-width-full mud-height-full";
+    string _dragClass = DefaultDragClass;
+    void SetDragClass() => _dragClass = $"{DefaultDragClass} mud-border-primary";
+    void ClearDragClass() => _dragClass = DefaultDragClass;
+
+    // selection
+    readonly List<IBrowserFile> _files = new();
+    IBrowserFile? FirstFile => _files.FirstOrDefault();
+
+    // preview (first file)
+    enum PreviewType
+    {
+        None,
+        Pdf,
+        Image,
+        Text,
+        Unsupported
+    }
+
+    PreviewType Preview = PreviewType.None;
+    string? PreviewDataUrl;
+    string? PreviewText;
+    string? PreviewMessage;
+
+    // request state
+    string Prompt = string.Empty;
+    string? Schema;
+    bool IsBusy;
+    CancellationTokenSource? _requestCts;
+    bool _canCancel => _requestCts is not null && !_requestCts.IsCancellationRequested;
+
+    // results
+    string? Data;
+    string? Error;
+
+    // history
+    List<HistoryEntry> _history = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _history = (await History.GetAllAsync()).ToList();
+    }
+
+    async Task OnInputFilesChanged(InputFileChangeEventArgs e)
+    {
+        ClearDragClass();
+        _files.Clear();
+        _files.AddRange(e.GetMultipleFiles());
+        await BuildPreviewAsync(FirstFile);
+    }
+
+    async Task BuildPreviewAsync(IBrowserFile? file)
+    {
+        if (file is null)
+        {
+            Preview = PreviewType.None;
+            PreviewDataUrl = PreviewText = PreviewMessage = null;
+            StateHasChanged();
+            return;
+        }
+
+        using var ms = new MemoryStream();
+        await file.OpenReadStream().CopyToAsync(ms);
+        var bytes = ms.ToArray();
+
+        var ct = file.ContentType.Trim() ?? "";
+        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+
+        if (ct == "application/pdf" || ext == ".pdf")
+        {
+            Preview = PreviewType.Pdf;
+            PreviewDataUrl = "data:application/pdf;base64," + Convert.ToBase64String(bytes);
+            PreviewText = PreviewMessage = null;
+        }
+        else if (ct.StartsWith("image/"))
+        {
+            Preview = PreviewType.Image;
+            PreviewDataUrl = $"data:{ct};base64,{Convert.ToBase64String(bytes)}";
+            PreviewText = PreviewMessage = null;
+        }
+        else if (IsTextLike(ct, ext))
+        {
+            Preview = PreviewType.Text;
+            PreviewText = DecodeText(bytes);
+            PreviewDataUrl = PreviewMessage = null;
+        }
+        else
+        {
+            Preview = PreviewType.Unsupported;
+            PreviewDataUrl = PreviewText = null;
+            PreviewMessage = $"Cannot preview {ext} files in the browser. They will still be sent for extraction.";
+        }
+
+        StateHasChanged();
+    }
+
+    static bool IsTextLike(string contentType, string ext) =>
+        (contentType?.StartsWith("text/") ?? false) ||
+        contentType is "application/json" or "application/xml" ||
+        ext is ".json" or ".xml" or ".csv" or ".txt";
+
+    static string DecodeText(byte[] bytes)
+    {
+        try
+        {
+            return Encoding.UTF8.GetString(bytes);
+        }
+        catch
+        {
+            return "(unable to decode as UTF-8)";
+        }
+    }
+
+    static string Pretty(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return s ?? "";
+        try
+        {
+            using var doc = JsonDocument.Parse(s);
+            return JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return s;
+        }
+    }
+
+    void ClearResult()
+    {
+        Data = null;
+        Error = null;
+    }
+
+    async Task ClearAll()
+    {
+        _files.Clear();
+        if (_fileUpload is not null)
+        {
+            await _fileUpload.ClearAsync();
+        }
+
+        Preview = PreviewType.None;
+        PreviewDataUrl = PreviewText = PreviewMessage = null;
+        Prompt = string.Empty;
+        Schema = null;
+        ClearResult();
+    }
+
+    void CancelRequest()
+    {
+        try
+        {
+            _requestCts?.Cancel();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+    }
+
+    async Task SendAsync()
+    {
+        if (_files.Count == 0 || _requestCts is not null) return;
+
+        IsBusy = true;
+        ClearResult();
+        _requestCts = new CancellationTokenSource();
+        var ct = _requestCts.Token;
+
+        var entry = new HistoryEntry
+        {
+            Id = Guid.NewGuid(),
+            Timestamp = DateTimeOffset.Now,
+            FileNames = _files.Select(f => f.Name).ToList(),
+            Prompt = Prompt,
+            Schema = Schema
+        };
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Schema) && !ValidateSchemaStrict(Schema!, out var errs))
+            {
+                entry.SchemaValidationErrors = errs;
+                Error = "Schema invalid. See history for details.";
+                await PushHistoryAsync(entry);
+                return;
+            }
+
+            var files = new List<FilePart>(_files.Count);
+            foreach (var f in _files)
+            {
+                using var ms = new MemoryStream();
+                await f.OpenReadStream().CopyToAsync(ms, ct);
+                files.Add(new FilePart { FileName = f.Name, Bytes = ms.ToArray() });
+            }
+
+            var payload = new DocumentExtractionRequest()
+            {
+                Prompt = Prompt,
+                Files = files,
+                JsonSchema = string.IsNullOrWhiteSpace(Schema) ? null : Schema,
+                SchemaName = "schema"
+            };
+
+            var res = await Http.PostAsJsonAsync("api/extract", payload, ct);
+            var body = await res.Content.ReadFromJsonAsync<DocumentExtractionResponse>(cancellationToken: ct);
+
+            if (body is null)
+            {
+                var httpErr = $"HTTP {(int)res.StatusCode} {res.ReasonPhrase}";
+                Error = httpErr;
+                entry.SubmissionError = httpErr;
+                await PushHistoryAsync(entry);
+                return;
+            }
+
+            if (body.IsError)
+            {
+                Error = body.Error;
+                entry.SubmissionError = body.Error;
+                await PushHistoryAsync(entry);
+                return;
+            }
+
+            Data = body.Data;
+            entry.ResponseJson = body.Data;
+            await PushHistoryAsync(entry);
+        }
+        catch (OperationCanceledException)
+        {
+            Error = "Request cancelled.";
+            entry.SubmissionError = "Request cancelled.";
+            await PushHistoryAsync(entry);
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+            entry.SubmissionError = ex.Message;
+            await PushHistoryAsync(entry);
+        }
+        finally
+        {
+            _requestCts?.Dispose();
+            _requestCts = null;
+            IsBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task PushHistoryAsync(HistoryEntry e)
+    {
+        await History.AddAsync(e);
+        _history = (await History.GetAllAsync()).ToList();
+        StateHasChanged();
+    }
+
+    async Task ClearHistoryAsync()
+    {
+        await History.ClearAsync();
+        _history.Clear();
+    }
+
+    async Task DeleteHistoryAsync(Guid id)
+    {
+        await History.DeleteAsync(id);
+        _history = (await History.GetAllAsync()).ToList();
+        StateHasChanged();
+    }
+
+    // strict validator (no auto-fix)
+    static bool ValidateSchemaStrict(string schemaJson, out string errors)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using var doc = JsonDocument.Parse(schemaJson);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                errors = "Root must be a JSON object.";
+                return false;
+            }
+
+            if (!root.TryGetProperty("properties", out var propsEl) || propsEl.ValueKind != JsonValueKind.Object)
+            {
+                errors = "Schema must contain a 'properties' object.";
+                return false;
+            }
+
+            var propNames = propsEl.EnumerateObject().Select(p => p.Name).ToArray();
+
+            if (!root.TryGetProperty("required", out var reqEl) || reqEl.ValueKind != JsonValueKind.Array)
+            {
+                errors = "'required' must be an array including every key in 'properties'.";
+                return false;
+            }
+
+            var requiredNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in reqEl.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    errors = "'required' must only contain strings.";
+                    return false;
+                }
+
+                requiredNames.Add(item.GetString()!);
+            }
+
+            var missing = propNames.Where(p => !requiredNames.Contains(p)).ToArray();
+            if (missing.Length > 0)
+            {
+                sb.AppendLine("The 'required' array is missing the following properties:");
+                foreach (var m in missing) sb.AppendLine($" - {m}");
+            }
+
+            if (!root.TryGetProperty("additionalProperties", out var apEl) || apEl.ValueKind != JsonValueKind.False)
+                sb.AppendLine("(Note) For strict output, set 'additionalProperties': false.");
+
+            errors = sb.ToString().Trim();
+            return string.IsNullOrEmpty(errors) || errors.StartsWith("(Note)");
+        }
+        catch (JsonException jx)
+        {
+            errors = $"Schema is not valid JSON: {jx.Message}";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            errors = $"Schema validation failed: {ex.Message}";
+            return false;
+        }
+    }
+
+}

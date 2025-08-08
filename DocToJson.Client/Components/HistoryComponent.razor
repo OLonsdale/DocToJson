@@ -1,0 +1,108 @@
+@using DocToJson.Client.Data
+@using MudBlazor
+@using DocToJson.Client.Services
+@inject HistoryService History
+
+<MudStack Row AlignItems="AlignItems.Center" Spacing="1">
+    <MudSpacer/>
+    <MudButton Variant="Variant.Outlined" Color="Color.Default"
+               Disabled="@(_items.Count == 0 || Busy)"
+               OnClick="@ClearAll"
+               EndIcon="@Icons.Material.Filled.History">
+        Clear History
+    </MudButton>
+</MudStack>
+
+<MudExpansionPanels>
+    @foreach (var h in _items)
+    {
+        <MudExpansionPanel>
+            <TitleContent>
+                <MudToolBar>
+                    <MudText>@h.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                    <MudText Class="ml-2">@string.Join(", ",h.FileNames)</MudText>
+                    <MudText Class="ml-2">@(
+                        !string.IsNullOrWhiteSpace(h.SchemaValidationErrors) ? "Schema invalid" :
+                        !string.IsNullOrWhiteSpace(h.SubmissionError) ? "Error" :
+                        !string.IsNullOrWhiteSpace(h.ResponseJson) ? "Success" : "Blank"
+                    )</MudText>
+                    <MudSpacer />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                   OnClick="@(() => Delete(h.Id))"/>
+                </MudToolBar>
+            </TitleContent>
+            <ChildContent>
+                <MudPaper Class="pa-3 my-2">
+                    <MudText Typo="Typo.subtitle2">Prompt</MudText>
+                    <pre style="white-space:pre-wrap; margin:0">@h.Prompt</pre>
+
+                    <MudText Typo="Typo.subtitle2" Class="mt-2">Schema</MudText>
+                    <pre style="white-space:pre-wrap; margin:0">@Pretty(h.Schema)</pre>
+
+                    @if (!string.IsNullOrWhiteSpace(h.SchemaValidationErrors))
+                    {
+                        <MudAlert Severity="Severity.Warning" Class="mt-2" Elevation="0">
+                            <pre style="white-space:pre-wrap; margin:0">@h.SchemaValidationErrors</pre>
+                        </MudAlert>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(h.SubmissionError))
+                    {
+                        <MudAlert Severity="Severity.Error" Class="mt-2" Elevation="0">
+                            <pre style="white-space:pre-wrap; margin:0">@Pretty(h.SubmissionError)</pre>
+                        </MudAlert>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(h.ResponseJson))
+                    {
+                        <MudText Typo="Typo.subtitle2" Class="mt-2">Response</MudText>
+                        <MudPaper Class="pa-2">
+                            <pre style="white-space:pre-wrap; margin:0">@Pretty(h.ResponseJson)</pre>
+                        </MudPaper>
+                    }
+                </MudPaper>
+            </ChildContent>
+        </MudExpansionPanel>
+    }
+</MudExpansionPanels>
+
+@code {
+    [Parameter] public bool Busy { get; set; }
+
+    List<HistoryEntry> _items = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _items = (await History.GetAllAsync()).ToList();
+    }
+
+    public async Task PushAsync(HistoryEntry entry)
+    {
+        await History.AddAsync(entry);
+        _items.Insert(0, entry);
+        StateHasChanged();
+    }
+
+    async Task Delete(Guid id)
+    {
+        await History.DeleteAsync(id);
+        var i = _items.FindIndex(x => x.Id == id);
+        if (i >= 0) _items.RemoveAt(i);
+    }
+
+    async Task ClearAll()
+    {
+        await History.ClearAsync();
+        _items.Clear();
+    }
+
+    static string Pretty(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return s ?? "";
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(s);
+            return System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return s; }
+    }
+}

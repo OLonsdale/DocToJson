@@ -1,0 +1,23 @@
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.h6">Paste JSON Schema</MudText>
+        <MudTextField T="string"
+                      @bind-Value="Json"
+                      Lines="16"
+                      Variant="Variant.Outlined"
+                      Placeholder="{ ... }"
+                      Style="width:100%; margin-top:8px" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Ok" Disabled="@string.IsNullOrWhiteSpace(Json)">Import</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance Dialog { get; set; } = default!;
+    string? Json;
+
+    void Cancel() => Dialog.Cancel();
+    void Ok() => Dialog.Close(DialogResult.Ok(Json));
+}
