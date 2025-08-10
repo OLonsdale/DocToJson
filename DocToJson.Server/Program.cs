@@ -1,5 +1,3 @@
-using Blazored.LocalStorage;
-
 namespace DocToJson.Server;
 
 internal static class Program
@@ -12,13 +10,13 @@ internal static class Program
         builder.Services.AddRazorPages();
         builder.Services.AddHttpClient();
         
-        builder.Services.AddMemoryCache();
         
         builder.Services.AddHttpClient("openai", c =>
         {
             c.BaseAddress = new Uri("https://api.openai.com/v1/");
         });
 
+        builder.Services.AddSingleton<Services.PricingService>();
         var app = builder.Build();
 
         if (app.Environment.IsDevelopment())

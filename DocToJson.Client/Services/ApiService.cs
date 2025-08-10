@@ -6,11 +6,9 @@ namespace DocToJson.Client.Services;
 
 public sealed class ApiService(HttpClient http)
 {
-    public async Task<ModelsDto> GetModelsAsync(bool force = false, CancellationToken ct = default)
+    public async Task<List<string>> GetModelsAsync(bool force = false, CancellationToken ct = default)
     {
-        var url = $"api/models{(force ? "?force=true" : "")}";
-        var dto = await http.GetFromJsonAsync<ModelsDto>(url, ct);
-        return dto ?? new ModelsDto(DateTime.UtcNow, []);
+        return (await http.GetFromJsonAsync<List<string>>("api/models", ct)) ?? [];
     }
 
     public async Task<DocumentExtractionResponse?> ExtractAsync(DocumentExtractionRequest payload, CancellationToken ct = default)

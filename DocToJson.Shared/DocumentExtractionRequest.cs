@@ -4,7 +4,7 @@ public class DocumentExtractionRequest
 {
 
         public string Prompt { get; set; } = "";
-        public List<FilePart> Files { get; set; } = new();
+        public List<FilePart> Files { get; set; } = [];
         public string? JsonSchema { get; set; }
         public string? SchemaName { get; set; }
         public string? Model { get; set; }
@@ -15,5 +15,5 @@ public class DocumentExtractionRequest
     public class FilePart
     {
         public string FileName { get; set; } = "";
-        public byte[] Bytes { get; set; } = Array.Empty<byte>();
+        public byte[] Bytes { get; set; } = [];
     }

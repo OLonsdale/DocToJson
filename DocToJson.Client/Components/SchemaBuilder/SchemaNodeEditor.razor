@@ -1,0 +1,151 @@
+<MudTable Dense Hover Outlined Items="Nodes">
+    <HeaderContent>
+        <MudTh style="width:36px"></MudTh>
+        <MudTh style="width:28%">Name</MudTh>
+        <MudTh style="width:26%">Type</MudTh>
+        @if (!ForceStrict)
+        {
+            <MudTh style="width:14%">Required</MudTh>
+        }
+        <MudTh></MudTh>
+    </HeaderContent>
+
+    <RowTemplate Context="node">
+        <MudTd>
+            @if (CanHaveChildren(node))
+            {
+                <MudTooltip Text="@(node.ShowChildren ? "Hide children" : "Show children")">
+                    <MudIconButton Size="Size.Small"
+                                   Icon="@(node.ShowChildren ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                   OnClick="@(() => Toggle(node))" />
+                </MudTooltip>
+            }
+        </MudTd>
+
+        <MudTd>
+            <MudTextField T="string"
+                          Value="@node.Name"
+                          ValueChanged="@((string v) => { node.Name = v; OnChange?.Invoke(); })"
+                          Immediate="true"/>
+        </MudTd>
+
+        <MudTd>
+            <MudSelect T="string"
+                       Value="@node.Type"
+                       ValueChanged="@((string v) => { ChangeType(node, v); })"
+                       Dense="true">
+                <MudSelectItem Value="@("string")">string</MudSelectItem>
+                <MudSelectItem Value="@("date-time")">string (date-time)</MudSelectItem>
+                <MudSelectItem Value="@("number")">number</MudSelectItem>
+                <MudSelectItem Value="@("boolean")">boolean</MudSelectItem>
+                <MudSelectItem Value="@("object")">object</MudSelectItem>
+                <MudSelectItem Value="@("array<string>")">array&lt;string&gt;</MudSelectItem>
+                <MudSelectItem Value="@("array<date-time>")">array&lt;string (date-time)&gt;</MudSelectItem>
+                <MudSelectItem Value="@("array<number>")">array&lt;number&gt;</MudSelectItem>
+                <MudSelectItem Value="@("array<boolean>")">array&lt;boolean&gt;</MudSelectItem>
+                <MudSelectItem Value="@("array<object>")">array&lt;object&gt;</MudSelectItem>
+            </MudSelect>
+        </MudTd>
+
+        @if (!ForceStrict)
+        {
+            <MudTd>
+                <MudSwitch T="bool"
+                           Value="@node.Required"
+                           ValueChanged="@((bool v) => { node.Required = v; OnChange?.Invoke(); })"
+                           Disabled="ForceStrict"
+                           Color="Color.Primary"/>
+            </MudTd>
+        }
+
+        <MudTd>
+            <MudStack Row Spacing="1">
+                @if (CanHaveChildren(node))
+                {
+                    <MudButton Variant="Variant.Text"
+                               StartIcon="@Icons.Material.Filled.LibraryAdd"
+                               OnClick="@(() => AddChild(node))">Add Child</MudButton>
+                }
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               OnClick="@(() => Remove(node))"/>
+            </MudStack>
+        </MudTd>
+    </RowTemplate>
+
+    <ChildRowContent Context="parent">
+        @if (CanHaveChildren(parent) && parent.ShowChildren)
+        {
+            <MudTd ColSpan="99">
+                <MudPaper Class="pa-2 mt-2 mud-border rounded">
+                    <MudText Typo="Typo.caption">
+                        @((parent.Type == "object")
+                            ? $"Children of {parent.Name} (object)"
+                            : $"Item fields of {parent.Name} (array<object>)")
+                    </MudText>
+
+                    <SchemaNodeEditor Nodes="parent.Children"
+                                      Depth="@(Depth + 1)"
+                                      ForceStrict="ForceStrict"
+                                      OnChange="OnChange" />
+                </MudPaper>
+            </MudTd>
+        }
+    </ChildRowContent>
+</MudTable>
+
+@code {
+    [Parameter] public List<SchemaBuilder.Field> Nodes { get; set; } = new();
+    [Parameter] public int Depth { get; set; }
+    [Parameter] public bool ForceStrict { get; set; }
+    [Parameter] public Action? OnChange { get; set; }
+
+    bool CanHaveChildren(SchemaBuilder.Field n) => n.Type == "object" || n.Type == "array<object>";
+
+    void Toggle(SchemaBuilder.Field n)
+    {
+        n.ShowChildren = !n.ShowChildren;
+        StateHasChanged();
+    }
+
+    void ChangeType(SchemaBuilder.Field n, string newType)
+    {
+        n.Type = newType;
+        if (!CanHaveChildren(n))
+            n.Children.Clear();
+        OnChange?.Invoke();
+    }
+
+    void AddChild(SchemaBuilder.Field parent)
+    {
+        parent.Children.Add(new SchemaBuilder.Field
+        {
+            Name = $"child_{parent.Children.Count + 1}",
+            Required = true,
+            Type = "string"
+        });
+        parent.ShowChildren = true;
+        OnChange?.Invoke();
+    }
+
+    void Remove(SchemaBuilder.Field node)
+    {
+        // Find & remove in root-level list first
+        if (Nodes.Remove(node))
+        {
+            OnChange?.Invoke();
+            return;
+        }
+
+        // Otherwise recursively remove from deeper lists
+        RemoveFrom(Nodes, node);
+        OnChange?.Invoke();
+    }
+
+    bool RemoveFrom(List<SchemaBuilder.Field> list, SchemaBuilder.Field target)
+    {
+        if (list.Remove(target)) return true;
+        foreach (var n in list)
+            if (RemoveFrom(n.Children, target)) return true;
+        return false;
+    }
+}

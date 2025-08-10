@@ -1,15 +1,18 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DocToJson.Server.Services;
 using DocToJson.Shared;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DocToJson.Server.Controllers;
 
 [ApiController]
-[Route("api")]
-public class ExtractionController(IHttpClientFactory httpClientFactory, IConfiguration config) : ControllerBase
+[Route("api/extract")]
+public class ExtractionController(IHttpClientFactory httpClientFactory, IConfiguration config, PricingService pricing)
+    : ControllerBase
 {
     readonly IHttpClientFactory _http = httpClientFactory;
     readonly IConfiguration _cfg = config;
@@ -21,30 +24,36 @@ public class ExtractionController(IHttpClientFactory httpClientFactory, IConfigu
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    [HttpPost("extract")]
+    [HttpPost]
     public async Task<ActionResult<DocumentExtractionResponse>> Extract([FromBody] DocumentExtractionRequest request, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
+
         try
         {
-            if (request.Files is null || request.Files.Count == 0)
+            if (request.Files.Count == 0)
                 return BadRequest(new DocumentExtractionResponse { IsError = true, Error = "No files provided." });
 
             var apiKey = _cfg["OpenAI:ApiKey"];
             if (string.IsNullOrWhiteSpace(apiKey))
                 return BadRequest(new DocumentExtractionResponse { IsError = true, Error = "OpenAI API key not configured." });
 
-            var http = _http.CreateClient();
+            var http = _http.CreateClient("openai");
             http.Timeout = Timeout.InfiniteTimeSpan;
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            http.DefaultRequestHeaders.Authorization = 
+                new AuthenticationHeaderValue("Bearer", apiKey);
             http.DefaultRequestHeaders.Accept.Clear();
-            http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            http.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json"));
 
-            // 1) upload each file -> file_id
+            // 1) Upload files
             var fileIds = new List<string>(request.Files.Count);
+            var filesOut = new List<FileProvenance>(request.Files.Count);
+
             foreach (var f in request.Files)
             {
                 using var mp = new MultipartFormDataContent();
-                mp.Add(new ByteArrayContent(f.Bytes ?? []), "file", f.FileName ?? "file.bin");
+                mp.Add(new ByteArrayContent(f.Bytes), "file", f.FileName);
                 mp.Add(new StringContent("assistants"), "purpose");
 
                 var upRes = await http.PostAsync(OpenAI.Files, mp, ct);
@@ -56,12 +65,18 @@ public class ExtractionController(IHttpClientFactory httpClientFactory, IConfigu
                 if (string.IsNullOrWhiteSpace(id))
                     return Problem("OpenAI did not return a file id.", statusCode: 502);
 
-                fileIds.Add(id!);
+                fileIds.Add(id);
+                filesOut.Add(new FileProvenance(
+                    FileName: f.FileName,
+                    FileId: id,
+                    SizeBytes: f.Bytes.LongLength,
+                    ContentType: null
+                ));
             }
 
             ct.ThrowIfCancellationRequested();
 
-            // 2) optional schema
+            // 2) Optional schema
             JsonElement? schemaEl = null;
             if (!string.IsNullOrWhiteSpace(request.JsonSchema))
             {
@@ -72,19 +87,22 @@ public class ExtractionController(IHttpClientFactory httpClientFactory, IConfigu
                 }
             }
 
-            // 3) build payload: prompt + many input_file
+            // 3) Build content for Responses API
             var content = new List<object>
             {
-                new { type = "input_text", text = schemaEl is JsonElement ? "Output JSON only. Use the provided JSON schema." : "Output JSON only. Return a single JSON object." },
-                new { type = "input_text", text = request.Prompt ?? "" }
+                new { type = "input_text", text = schemaEl != null ? "Output JSON only. Use the provided JSON schema." : "Output JSON only. Return a single JSON object." },
+                new { type = "input_text", text = request.Prompt }
             };
             content.AddRange(fileIds.Select(id => new { type = "input_file", file_id = id }));
 
+            // Always use the model string the client sent (or default)
+            var requestedModel = request.Model ?? _cfg["OpenAI:DefaultModel"] ?? "gpt-4.1-mini";
+
             object payload =
-                schemaEl is JsonElement s
+                schemaEl is { } s
                 ? new
                 {
-                    model = OpenAI.Models.ResponsesModel,
+                    model = requestedModel,
                     input = new[] { new { role = "user", content } },
                     text = new
                     {
@@ -99,63 +117,130 @@ public class ExtractionController(IHttpClientFactory httpClientFactory, IConfigu
                 }
                 : new
                 {
-                    model = OpenAI.Models.ResponsesModel,
+                    model = requestedModel,
                     input = new[] { new { role = "user", content } },
                     text = new { format = new { type = "json_object" } }
                 };
 
-            // 4) call responses
-            using var msg = new HttpRequestMessage(HttpMethod.Post, OpenAI.Responses)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(payload, JsonOpts), Encoding.UTF8, "application/json")
-            };
+            // 4) Call Responses API
+            using var msg = new HttpRequestMessage(HttpMethod.Post, OpenAI.Responses);
+            msg.Content = new StringContent(JsonSerializer.Serialize(payload, JsonOpts), Encoding.UTF8, "application/json");
 
             var res = await http.SendAsync(msg, ct);
             var resJson = await res.Content.ReadAsStringAsync(ct);
+
+            sw.Stop();
+            var latencyMs = (int)sw.ElapsedMilliseconds;
+
             if (!res.IsSuccessStatusCode)
                 return StatusCode((int)res.StatusCode, new DocumentExtractionResponse { IsError = true, Error = resJson });
 
-            var env = JsonSerializer.Deserialize<OpenAiResponseEnvelope>(resJson, JsonOpts) ?? new();
-            if (env.Error is not null)
-                return Ok(new DocumentExtractionResponse { IsError = true, Error = JsonSerializer.Serialize(env.Error, JsonOpts) });
+            // 5) Parse response strongly-typed
+            var parsed = JsonSerializer.Deserialize<OpenAiResponsesEnvelope>(resJson, JsonOpts);
+
+            if (parsed?.Error is not null)
+                return Ok(new DocumentExtractionResponse { IsError = true, Error = JsonSerializer.Serialize(parsed.Error, JsonOpts) });
 
             var text =
-                env.Output?.FirstOrDefault()?.Content?.FirstOrDefault()?.Text
-                ?? env.OutputText
+                parsed?.OutputText?.FirstOrDefault()
+                ?? parsed?.Output?
+                    .SelectMany(o => o.Content ?? [])
+                    .Select(c => c.Text)
+                    .FirstOrDefault(t => !string.IsNullOrWhiteSpace(t))
                 ?? string.Empty;
 
-            return Ok(new DocumentExtractionResponse { IsError = false, Data = text });
+            var inTok = parsed?.Usage?.InputTokens ?? 0;
+            var outTok = parsed?.Usage?.OutputTokens ?? 0;
+            var totalTok = parsed?.Usage?.TotalTokens ?? (inTok + outTok);
+
+            // 6) Price using the requested model (not the server-returned model name)
+            var usd = pricing.EstimateUsd(requestedModel, inTok, outTok);
+
+            return Ok(new DocumentExtractionResponse
+            {
+                IsError = false,
+                Data = text,
+                Details = new RunDetails
+                {
+                    Model = requestedModel,
+                    InputTokens = inTok,
+                    OutputTokens = outTok,
+                    TotalTokens = totalTok,
+                    LatencyMs = latencyMs,
+                    EstimatedCostUsd = usd
+                },
+                Usage = new Usage(inTok, outTok, totalTok, ReasoningTokens: null),
+                Files = filesOut.ToArray()
+            });
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && sw.Elapsed.TotalSeconds >= 90)
+        {
+            // Treat as OpenAI timeout (client didn't cancel; elapsed is long)
+            return StatusCode(504, new DocumentExtractionResponse
+            {
+                IsError = true,
+                Error = "Timed out by OpenAI."
+            });
         }
         catch (OperationCanceledException)
         {
-            return StatusCode(499, new DocumentExtractionResponse { IsError = true, Error = "Request cancelled." });
+            // Client-side cancel
+            return StatusCode(499, new DocumentExtractionResponse
+            {
+                IsError = true,
+                Error = "Request cancelled."
+            });
         }
     }
 
     static class OpenAI
     {
-        public static class Models
-        {
-            public const string ResponsesModel = "gpt-4.1-mini";
-        }
-        public static class Urls
-        {
-            public const string Base = "https://api.openai.com/v1";
-            public const string Files = $"{Base}/files";
-            public const string Responses = $"{Base}/responses";
-        }
-        public static string Files => Urls.Files;
-        public static string Responses => Urls.Responses;
+        public const string Files = "files";
+        public const string Responses = "responses";
+    }
+    
+
+    sealed class OpenAiResponsesEnvelope
+    {
+        [JsonPropertyName("error")]
+        public OpenAiError? Error { get; set; }
+
+        [JsonPropertyName("usage")]
+        public OpenAiUsage? Usage { get; set; }
+
+        // "output_text": [ "..." ]
+        [JsonPropertyName("output_text")]
+        public List<string>? OutputText { get; set; }
+
+        // "output": [ { content: [ { type, text } ] } ]
+        [JsonPropertyName("output")]
+        public List<OpenAiOutput>? Output { get; set; }
     }
 
-    // minimal response envelope parsing
-    sealed class OpenAiResponseEnvelope
+    sealed class OpenAiError
     {
-        public OpenAiError? Error { get; set; }
-        public string? OutputText { get; set; }
-        public List<OpenAiMessage>? Output { get; set; }
+        [JsonPropertyName("message")] public string? Message { get; set; }
+        [JsonPropertyName("type")] public string? Type { get; set; }
+        [JsonPropertyName("code")] public string? Code { get; set; }
+        [JsonPropertyName("param")] public string? Param { get; set; }
     }
-    sealed class OpenAiError { public string? Message { get; set; } public string? Type { get; set; } public string? Code { get; set; } public string? Param { get; set; } }
-    sealed class OpenAiMessage { public List<OpenAiContent>? Content { get; set; } }
-    sealed class OpenAiContent { public string? Type { get; set; } public string? Text { get; set; } }
+
+    sealed class OpenAiUsage
+    {
+        [JsonPropertyName("input_tokens")] public int InputTokens { get; set; }
+        [JsonPropertyName("output_tokens")] public int OutputTokens { get; set; }
+        [JsonPropertyName("total_tokens")] public int TotalTokens { get; set; }
+    }
+
+    sealed class OpenAiOutput
+    {
+        [JsonPropertyName("content")]
+        public List<OpenAiContent>? Content { get; set; }
+    }
+
+    sealed class OpenAiContent
+    {
+        [JsonPropertyName("type")] public string? Type { get; set; }
+        [JsonPropertyName("text")] public string? Text { get; set; }
+    }
 }
