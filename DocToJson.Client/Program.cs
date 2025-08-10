@@ -18,6 +18,7 @@ internal abstract class Program
         builder.Services.AddMudServices();
         builder.Services.AddBlazoredLocalStorage();
         builder.Services.AddScoped<HistoryService>();
+        builder.Services.AddScoped<ApiService>();
 
         await builder.Build().RunAsync();
     }

@@ -7,6 +7,7 @@ public class DocumentExtractionRequest
         public List<FilePart> Files { get; set; } = new();
         public string? JsonSchema { get; set; }
         public string? SchemaName { get; set; }
+        public string? Model { get; set; }
     
 
 

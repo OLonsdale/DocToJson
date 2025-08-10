@@ -11,6 +11,13 @@ internal static class Program
         builder.Services.AddControllersWithViews();
         builder.Services.AddRazorPages();
         builder.Services.AddHttpClient();
+        
+        builder.Services.AddMemoryCache();
+        
+        builder.Services.AddHttpClient("openai", c =>
+        {
+            c.BaseAddress = new Uri("https://api.openai.com/v1/");
+        });
 
         var app = builder.Build();
 

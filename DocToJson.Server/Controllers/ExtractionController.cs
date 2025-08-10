@@ -9,7 +9,7 @@ namespace DocToJson.Server.Controllers;
 
 [ApiController]
 [Route("api")]
-public class DocumentExtractionController(IHttpClientFactory httpClientFactory, IConfiguration config) : ControllerBase
+public class ExtractionController(IHttpClientFactory httpClientFactory, IConfiguration config) : ControllerBase
 {
     readonly IHttpClientFactory _http = httpClientFactory;
     readonly IConfiguration _cfg = config;

@@ -1,17 +1,18 @@
 @page "/"
 @using System.Text
 @using System.Text.Json
+@using Blazored.LocalStorage
 @using Microsoft.AspNetCore.Components.Forms
 @using MudBlazor
 @using DocToJson.Shared
 @using DocToJson.Client.Services
 @using DocToJson.Client.Data
 
-<PageTitle>File(s) → JSON</PageTitle>
+<PageTitle>Doc To JSON</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="mt-6">
     <MudToolBar>
-    <MudText Typo="Typo.h5">File(s) → JSON</MudText>
+    <MudText Typo="Typo.h5">Doc To JSON</MudText>
     
     <MudSpacer/>
         <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ClearAll" Disabled="@IsBusy"
@@ -65,6 +66,18 @@
                         <MudText>@(f.Name) (@(f.Size) bytes)</MudText>
                     }
                 }
+                
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudSelect T="string" Value="@selectedModel" ValueChanged="OnSelectedModelChanged"
+                               Label="Model" Dense="true" Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var m in models)
+                        {
+                            <MudSelectItem Value="@m">@m</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudButton OnClick="RefreshModels" Variant="Variant.Outlined">Refresh</MudButton>
+                    <MudText Typo="Typo.caption">@lastFetchedLabel</MudText>
+                </MudStack>
 
                 <MudToolBar WrapContent Class="mt-2">
                     <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SendAsync"
@@ -191,8 +204,9 @@
 </MudContainer>
 
 @code {
-    [Inject] HttpClient Http { get; set; } = default!;
+    [Inject] ApiService Api { get; set; } = default!;
     [Inject] HistoryService History { get; set; } = default!;
+    [Inject] ILocalStorageService LocalStorage { get; set; } = default!;
 
     // drag/drop
     MudFileUpload<IReadOnlyList<IBrowserFile>>? _fileUpload;
@@ -214,6 +228,37 @@
         Text,
         Unsupported
     }
+    
+    List<string> models = [];
+    string? selectedModel;
+    string lastFetchedLabel = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _history = (await History.GetAllAsync()).ToList();
+        selectedModel = await LocalStorage.GetItemAsStringAsync("SelectedModel");
+        await LoadModels();
+        if (string.IsNullOrWhiteSpace(selectedModel) && models.Count > 0)
+            selectedModel = models.Contains("gpt-4.1-mini") ? "gpt-4.1-mini" : models[0];
+        await LocalStorage.SetItemAsStringAsync("SelectedModel", selectedModel);
+    }
+
+    async Task RefreshModels() => await LoadModels(force: true);
+
+    async Task LoadModels(bool force = false)
+    {
+        var dto = await Api.GetModelsAsync(force);
+        models = dto.Models.ToList();
+        lastFetchedLabel = $"Fetched {dto.FetchedAt:yyyy-MM-dd HH:mm:ss}Z";
+    }
+
+    async Task OnSelectedModelChanged(string? value)
+    {
+        selectedModel = value;
+        await LocalStorage.SetItemAsStringAsync("SelectedModel", selectedModel);
+    }
+
+    sealed record ModelsDto(DateTime fetchedAt, string[] models);
 
     PreviewType Preview = PreviewType.None;
     string? PreviewDataUrl;
@@ -233,12 +278,7 @@
 
     // history
     List<HistoryEntry> _history = new();
-
-    protected override async Task OnInitializedAsync()
-    {
-        _history = (await History.GetAllAsync()).ToList();
-    }
-
+    
     async Task OnInputFilesChanged(InputFileChangeEventArgs e)
     {
         ClearDragClass();
@@ -357,93 +397,94 @@
     }
 
     async Task SendAsync()
+{
+    if (_files.Count == 0 || _requestCts is not null) return;
+
+    IsBusy = true;
+    ClearResult();
+    _requestCts = new CancellationTokenSource();
+    var ct = _requestCts.Token;
+
+    var entry = new HistoryEntry
     {
-        if (_files.Count == 0 || _requestCts is not null) return;
+        Id = Guid.NewGuid(),
+        Timestamp = DateTimeOffset.Now,
+        FileNames = _files.Select(f => f.Name).ToList(),
+        Prompt = Prompt,
+        Schema = Schema
+    };
 
-        IsBusy = true;
-        ClearResult();
-        _requestCts = new CancellationTokenSource();
-        var ct = _requestCts.Token;
-
-        var entry = new HistoryEntry
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(Schema) && !ValidateSchemaStrict(Schema!, out var errs))
         {
-            Id = Guid.NewGuid(),
-            Timestamp = DateTimeOffset.Now,
-            FileNames = _files.Select(f => f.Name).ToList(),
+            entry.SchemaValidationErrors = errs;
+            Error = "Schema invalid. See history for details.";
+            await PushHistoryAsync(entry);
+            return;
+        }
+
+        var files = new List<FilePart>(_files.Count);
+        foreach (var f in _files)
+        {
+            using var ms = new MemoryStream();
+            await f.OpenReadStream().CopyToAsync(ms, ct);
+            files.Add(new FilePart { FileName = f.Name, Bytes = ms.ToArray() });
+        }
+
+        var payload = new DocumentExtractionRequest
+        {
             Prompt = Prompt,
-            Schema = Schema
+            Files = files,
+            JsonSchema = string.IsNullOrWhiteSpace(Schema) ? null : Schema,
+            SchemaName = "schema",
+            Model = selectedModel
         };
 
-        try
+        var body = await Api.ExtractAsync(payload, ct);
+
+        if (body is null)
         {
-            if (!string.IsNullOrWhiteSpace(Schema) && !ValidateSchemaStrict(Schema!, out var errs))
-            {
-                entry.SchemaValidationErrors = errs;
-                Error = "Schema invalid. See history for details.";
-                await PushHistoryAsync(entry);
-                return;
-            }
-
-            var files = new List<FilePart>(_files.Count);
-            foreach (var f in _files)
-            {
-                using var ms = new MemoryStream();
-                await f.OpenReadStream().CopyToAsync(ms, ct);
-                files.Add(new FilePart { FileName = f.Name, Bytes = ms.ToArray() });
-            }
-
-            var payload = new DocumentExtractionRequest()
-            {
-                Prompt = Prompt,
-                Files = files,
-                JsonSchema = string.IsNullOrWhiteSpace(Schema) ? null : Schema,
-                SchemaName = "schema"
-            };
-
-            var res = await Http.PostAsJsonAsync("api/extract", payload, ct);
-            var body = await res.Content.ReadFromJsonAsync<DocumentExtractionResponse>(cancellationToken: ct);
-
-            if (body is null)
-            {
-                var httpErr = $"HTTP {(int)res.StatusCode} {res.ReasonPhrase}";
-                Error = httpErr;
-                entry.SubmissionError = httpErr;
-                await PushHistoryAsync(entry);
-                return;
-            }
-
-            if (body.IsError)
-            {
-                Error = body.Error;
-                entry.SubmissionError = body.Error;
-                await PushHistoryAsync(entry);
-                return;
-            }
-
-            Data = body.Data;
-            entry.ResponseJson = body.Data;
+            const string httpErr = "No response body.";
+            Error = httpErr;
+            entry.SubmissionError = httpErr;
             await PushHistoryAsync(entry);
+            return;
         }
-        catch (OperationCanceledException)
+
+        if (body.IsError)
         {
-            Error = "Request cancelled.";
-            entry.SubmissionError = "Request cancelled.";
+            Error = body.Error;
+            entry.SubmissionError = body.Error;
             await PushHistoryAsync(entry);
+            return;
         }
-        catch (Exception ex)
-        {
-            Error = ex.Message;
-            entry.SubmissionError = ex.Message;
-            await PushHistoryAsync(entry);
-        }
-        finally
-        {
-            _requestCts?.Dispose();
-            _requestCts = null;
-            IsBusy = false;
-            StateHasChanged();
-        }
+
+        Data = body.Data;
+        entry.ResponseJson = body.Data;
+        await PushHistoryAsync(entry);
     }
+    catch (OperationCanceledException)
+    {
+        Error = "Request cancelled.";
+        entry.SubmissionError = "Request cancelled.";
+        await PushHistoryAsync(entry);
+    }
+    catch (Exception ex)
+    {
+        Error = ex.Message;
+        entry.SubmissionError = ex.Message;
+        await PushHistoryAsync(entry);
+    }
+    finally
+    {
+        _requestCts?.Dispose();
+        _requestCts = null;
+        IsBusy = false;
+        StateHasChanged();
+    }
+}
+
 
     async Task PushHistoryAsync(HistoryEntry e)
     {
