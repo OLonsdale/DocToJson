@@ -27,7 +27,7 @@ Requires the backend server, as files cannot be sent directly from Blazor WebAss
 Supports uploading multiple files in a single request to produce one combined JSON document.
 
 Includes an in-app JSON Schema builder for defining or editing output structure. 
-This can take a JSON document to create a schema automatically, and supports arbritrerally deep documents.
+This can take a JSON document to create a schema automatically, and supports arbitrarily deep documents.
 
 Stores schema and request history in browser Local Storage.
 
