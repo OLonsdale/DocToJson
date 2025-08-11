@@ -1,0 +1,62 @@
+
+<MudExpansionPanel>
+            <TitleContent>
+                <MudToolBar>
+                    <MudText>@HistoryEntry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                    <MudText Class="ml-2">@HistoryEntry.FileNames.JoinToString(", ")</MudText>
+                    <MudText Class="ml-2">@(
+                                          !string.IsNullOrWhiteSpace(HistoryEntry.SchemaValidationErrors) ? "Schema invalid" :
+                                          !string.IsNullOrWhiteSpace(HistoryEntry.SubmissionError) ? "Error" :
+                                          !string.IsNullOrWhiteSpace(HistoryEntry.ResponseJson) ? "Success" : "Blank"
+                                          )</MudText>
+                    <MudText Class="ml-2">@HistoryEntry.Details?.EstimatedCostUsd.Prefix("$")</MudText>
+                    <MudText Class="ml-2">@(HistoryEntry.Details?.LatencyMs.Postfix("ms"))</MudText>
+                    <MudText Class="ml-2">@HistoryEntry.Details?.Model</MudText>
+                    
+                    <MudSpacer />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                   OnClick="@DeleteSelf"/>
+                </MudToolBar>
+            </TitleContent>
+               <ChildContent>
+        <MudPaper Class="pa-3 my-2">
+            <MudText Typo="Typo.subtitle2">Prompt</MudText>
+            <CollapsiblePre Label="Prompt" Text="@HistoryEntry.Prompt" />
+
+            <CollapsiblePre Label="Schema" Text="@HelperStaticMethods.PrettyJson(HistoryEntry.Schema)" />
+
+            @if (!string.IsNullOrWhiteSpace(HistoryEntry.SchemaValidationErrors))
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2" Elevation="0">
+                    <CollapsiblePre Text="@HistoryEntry.SchemaValidationErrors" />
+                </MudAlert>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(HistoryEntry.SubmissionError))
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-2" Elevation="0">
+                    <CollapsiblePre Text="@HelperStaticMethods.PrettyJson(HistoryEntry.SubmissionError)" />
+                </MudAlert>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(HistoryEntry.ResponseJson))
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-2">Response</MudText>
+                <MudPaper Class="pa-2">
+                    <CollapsiblePre Text="@HelperStaticMethods.PrettyJson(HistoryEntry.ResponseJson)" />
+                </MudPaper>
+            }
+        </MudPaper>
+    </ChildContent>
+        </MudExpansionPanel>
+
+@code {
+    
+    [Parameter] public HistoryEntry HistoryEntry { get; set; } = default!;
+    [Parameter] public EventCallback<Guid> OnDelete { get; set; }
+
+    [Inject] HistoryService History { get; set; } = default!;
+    
+    Task DeleteSelf() => OnDelete.InvokeAsync(HistoryEntry.Id);
+    
+}

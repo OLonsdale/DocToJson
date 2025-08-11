@@ -1,0 +1,129 @@
+<MudStack Spacing="2">
+    @if (Files?.Count > 0)
+    {
+        <MudPaper Class="pa-3">
+            <MudSelect T="IBrowserFile"
+                       Value="@previewFile"
+                       ValueChanged="OnSelectedPreviewFileChanged"
+                       Label="Preview file"
+                       Dense
+                       Variant="Variant.Outlined">
+                @foreach (var f in Files)
+                {
+                    <MudSelectItem Value="@f">@f.Name (@f.Size bytes)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudPaper>
+    }
+
+    @switch (preview)
+    {
+        case PreviewType.Pdf:
+            <iframe src="@previewDataUrl" style="width:100%; height:@Height; border:none;"></iframe>
+            break;
+        case PreviewType.Image:
+            <img src="@previewDataUrl" style="max-width:100%; height:auto; border:0;" alt=""/>
+            break;
+        case PreviewType.Text:
+            <MudPaper Elevation="0" Class="pa-2">
+                <pre style="white-space:pre-wrap; margin:0">@previewText</pre>
+            </MudPaper>
+            break;
+        case PreviewType.Unsupported:
+            <MudAlert Severity="Severity.Info" Elevation="0">@previewMessage</MudAlert>
+            break;
+        default:
+            <MudText Color="Color.Secondary">No file selected.</MudText>
+            break;
+    }
+</MudStack>
+
+@code {
+    [Parameter] public IReadOnlyList<IBrowserFile> Files { get; set; } = Array.Empty<IBrowserFile>();
+    [Parameter] public string Height { get; set; } = "75vh";
+
+    enum PreviewType { None, Pdf, Image, Text, Unsupported }
+
+    IBrowserFile? previewFile;
+    PreviewType preview = PreviewType.None;
+    string? previewDataUrl;
+    string? previewText;
+    string? previewMessage;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Files is null || Files.Count == 0)
+        {
+            preview = PreviewType.None;
+            previewFile = null;
+            previewDataUrl = previewText = previewMessage = null;
+            return;
+        }
+
+        if (previewFile is null || !Files.Contains(previewFile))
+        {
+            previewFile = Files[0];
+            await BuildPreviewAsync(previewFile);
+        }
+    }
+
+    Task OnSelectedPreviewFileChanged(IBrowserFile? file) => BuildPreviewAsync(file);
+
+    async Task BuildPreviewAsync(IBrowserFile? file)
+    {
+        previewFile = file;
+
+        if (file is null)
+        {
+            preview = PreviewType.None;
+            previewDataUrl = previewText = previewMessage = null;
+            StateHasChanged();
+            return;
+        }
+
+        using var ms = new MemoryStream();
+        await file.OpenReadStream().CopyToAsync(ms);
+        var bytes = ms.ToArray();
+
+        var ct = file.ContentType?.Trim() ?? "";
+        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+
+        if (ct == "application/pdf" || ext == ".pdf")
+        {
+            preview = PreviewType.Pdf;
+            previewDataUrl = "data:application/pdf;base64," + Convert.ToBase64String(bytes);
+            previewText = previewMessage = null;
+        }
+        else if (ct.StartsWith("image/"))
+        {
+            preview = PreviewType.Image;
+            previewDataUrl = $"data:{ct};base64,{Convert.ToBase64String(bytes)}";
+            previewText = previewMessage = null;
+        }
+        else if (IsTextLike(ct, ext))
+        {
+            preview = PreviewType.Text;
+            previewText = DecodeText(bytes);
+            previewDataUrl = previewMessage = null;
+        }
+        else
+        {
+            preview = PreviewType.Unsupported;
+            previewDataUrl = previewText = null;
+            previewMessage = $"Cannot preview {ext} files in the browser. They will still be sent for extraction.";
+        }
+
+        StateHasChanged();
+    }
+
+    static bool IsTextLike(string? contentType, string ext) =>
+        (contentType?.StartsWith("text/") ?? false) ||
+        contentType is "application/json" or "application/xml" ||
+        ext is ".json" or ".xml" or ".csv" or ".txt";
+
+    static string DecodeText(byte[] bytes)
+    {
+        try { return Encoding.UTF8.GetString(bytes); }
+        catch { return "(unable to decode as UTF-8)"; }
+    }
+}

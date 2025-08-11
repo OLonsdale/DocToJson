@@ -1,44 +1,66 @@
 @page "/"
-
-@using System.Text
-@using System.Text.Json
-@using Blazored.LocalStorage
-@using Microsoft.AspNetCore.Components.Forms
-@using DocToJson.Shared
-@using DocToJson.Client.Services
-@using DocToJson.Client.Data
 @using DocToJson.Client.Components.SchemaBuilder
+@* Claims not to need this, but does *@
 
-<PageTitle>Doc To JSON</PageTitle>
+<PageTitle>Doc to JSON</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" >
-    <MudToolBar>
-        <MudText Typo="Typo.h5">Doc To JSON</MudText>
+<MudContainer MaxWidth="MaxWidth.ExtraExtraLarge">
+    <MudToolBar Gutters="false">
+        <MudFab OnClick="@ToggleDark" EndIcon="@Icons.Material.Filled.Brightness6"/>
         <MudSpacer/>
-        <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="ClearAll" Disabled="@isBusy"
+        <MudText Typo="Typo.h5">Doc to JSON</MudText>
+        <MudSpacer/>
+        <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="@ClearAll" Disabled="@isBusy"
                    EndIcon="@Icons.Material.Filled.Refresh">Reset All
         </MudButton>
     </MudToolBar>
 
-    <MudStack Spacing="2">
-        <MudText Typo="Typo.h6">Instructions (Optional)</MudText>
+    <MudExpansionPanels MultiExpansion>
 
-        <MudPaper Class="pa-3">
-            <MudTextField @bind-Value="prompt"
-                          Label="Custom Prompt"
-                          Placeholder="E.g. Calculate unit price if only line total + quantity provided"
-                          Variant="Variant.Text"
-                          Lines="3"
-                          Clearable="true"/>
-        </MudPaper>
+        <MudExpansionPanel Expanded>
+            <TitleContent>
+                <MudText Typo="Typo.h6">Instructions (Optional)</MudText>
+            </TitleContent>
+            <ChildContent>
+                <MudTextField @bind-Value="prompt"
+                              Label="Custom Prompt"
+                              Placeholder="E.g. Calculate unit price if only line total + quantity provided"
+                              Variant="Variant.Outlined"
+                              Lines="3"
+                              Clearable/>
+            </ChildContent>
+        </MudExpansionPanel>
 
-        <MudText Typo="Typo.h6">Force output to conform to schema (Optional)</MudText>
-        <SchemaBuilder @bind-Value="schema"/>
-
-        <MudText Typo="Typo.h6">Select Files</MudText>
-
-        <MudExpansionPanels MultiExpansion>
-            <MudExpansionPanel Text="Upload & Actions" Expanded>
+        <MudExpansionPanel Expanded>
+            <TitleContent>
+                <MudText Typo="Typo.h6">Force output to conform to schema (Optional)</MudText>
+            </TitleContent>
+            <ChildContent>
+                <MudSelect T="string" Value="@selectedModel" ValueChanged="OnSelectedModelChanged"
+                           Label="Model" Dense Variant="Variant.Outlined">
+                    @foreach (var m in models)
+                    {
+                        <MudSelectItem Value="@m">@m</MudSelectItem>
+                    }
+                </MudSelect>
+            </ChildContent>
+        </MudExpansionPanel>
+        
+        <MudExpansionPanel Expanded>
+            <TitleContent>
+                <MudText Typo="Typo.h6">JSON Schema (Optional)</MudText>
+                <MudText Typo="Typo.caption">Use this to enforce a specific output format </MudText>
+            </TitleContent>
+            <ChildContent>
+                <SchemaBuilder @bind-Value="schema"/>
+            </ChildContent>
+        </MudExpansionPanel>
+        
+        <MudExpansionPanel Expanded>
+            <TitleContent>
+                <MudText Typo="Typo.h6">Select Files</MudText>
+            </TitleContent>
+            <ChildContent>
                 <MudFileUpload T="IReadOnlyList<IBrowserFile>"
                                @ref="fileUpload"
                                AppendMultipleFiles
@@ -47,237 +69,72 @@
                                InputClass="absolute mud-width-full mud-height-full overflow-hidden z-10"
                                InputStyle="opacity:0"
                                Accept=".pdf,.docx,.doc,.csv,.txt,.xlsx,.xls,.json,.png,.jpg,.jpeg,.xml"
-                               @ondragenter="SetDragClass"
-                               @ondragleave="ClearDragClass"
+                               @ondragenter="@SetDragClass"
+                               @ondragleave="@ClearDragClass"
                                @ondragend="ClearDragClass"
                                @ondrop="ClearDragClass">
                     <ActivatorContent>
-                        <MudPaper Height="100px" Outlined="true" Class="@dragClass">
+                        <MudPaper Height="100px" Outlined Class="@dragClass">
                             <MudText Typo="Typo.h6">Drop files here or click to select</MudText>
                         </MudPaper>
                     </ActivatorContent>
                 </MudFileUpload>
 
-                @if (files.Count > 0)
+                @foreach (var f in files)
                 {
-                    foreach (var f in files)
-                    {
-                        <MudText>@(f.Name) (@(f.Size) bytes)</MudText>
-                    }
+                    <MudText Style="font-weight: bold">@(f.Name) (@(f.Size) bytes)</MudText>
                 }
-
-                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-                    <MudSelect T="string" Value="@selectedModel" ValueChanged="OnSelectedModelChanged"
-                               Label="Model" Dense="true" Variant="Variant.Outlined" Clearable="true">
-                        @foreach (var m in models)
-                        {
-                            <MudSelectItem Value="@m">@m</MudSelectItem>
-                        }
-                    </MudSelect>
-                </MudStack>
-
-                <MudToolBar WrapContent Class="mt-2">
-                    <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SendAsync"
-                               Disabled="@(files.Count == 0 || isBusy)" EndIcon="@Icons.Material.Filled.Send">
-                        Send Request
-                    </MudButton>
-
-                    <MudButton Color="Color.Error" Variant="Variant.Outlined" OnClick="CancelRequest"
-                               Disabled="@(!CanCancel)" StartIcon="@Icons.Material.Filled.Cancel">
-                        Cancel
-                    </MudButton>
-                </MudToolBar>
-
-                @if (isBusy)
-                {
-                    <MudProgressCircular Indeterminate Color="Color.Primary" Size="Size.Large" Class="mt-2"/>
-                }
-            </MudExpansionPanel>
-
-            <MudExpansionPanel Text="Preview (first file)">
-                @switch (preview)
-                {
-                    case PreviewType.Pdf:
-                        <iframe src="@previewDataUrl" style="width:100%; height:75vh; border:none;"></iframe>
-                        break;
-                    case PreviewType.Image:
-                        <img src="@previewDataUrl" style="max-width:100%; height:auto; border:0;" alt=""/>
-                        break;
-                    case PreviewType.Text:
-                        <MudPaper Elevation="0" Class="pa-2">
-                            <pre style="white-space:pre-wrap; margin:0">@previewText</pre>
-                        </MudPaper>
-                        break;
-                    case PreviewType.Unsupported:
-                        <MudAlert Severity="Severity.Info" Elevation="0">@previewMessage</MudAlert>
-                        break;
-                    default:
-                        <MudText Color="Color.Secondary">No file selected.</MudText>
-                        break;
-                }
-            </MudExpansionPanel>
-
-            <MudText Typo="Typo.h6">Response</MudText>
-
-            <MudExpansionPanel Expanded Text="Latest Result">
-                @if (!string.IsNullOrEmpty(error))
-                {
-                    <MudAlert Severity="Severity.Error" Elevation="0">
-                        <pre style="white-space:pre-wrap; margin:0">@Pretty(error)</pre>
-                    </MudAlert>
-                }
-                @if (!string.IsNullOrEmpty(data))
-                {
-                    <MudPaper Elevation="0" Class="pa-2 mt-2">
-                        <pre style="white-space:pre-wrap; margin:0">@Pretty(data)</pre>
-                    </MudPaper>
-                }
-
-                @if (lastDetails is not null)
-                {
-                    <MudDivider Class="my-2" />
-                    <MudText Typo="Typo.subtitle2">Run details</MudText>
-                    <MudStack>
-                        <MudText>Model: @lastDetails.Model</MudText>
-                        <MudText>Tokens: in @lastDetails.InputTokens • out @lastDetails.OutputTokens • total @lastDetails.TotalTokens</MudText>
-                        <MudText>Latency: @lastDetails.LatencyMs ms</MudText>
-                        <MudText>Est. cost (USD): @lastDetails.EstimatedCostUsd.ToString("0.00000")</MudText>
-                    </MudStack>
-                }
-
-                @if (lastUsage is not null)
-                {
-                    <MudText Typo="Typo.subtitle2" Class="mt-2">Usage</MudText>
-                    <MudText>Input: @lastUsage.InputTokens, Output: @lastUsage.OutputTokens, Total: @lastUsage.TotalTokens</MudText>
-                }
-
-                @if (lastFiles is not null && lastFiles.Length > 0)
-                {
-                    <MudText Typo="Typo.subtitle2" Class="mt-2">Files</MudText>
-                    <MudTable Items="lastFiles" Dense="true" Hover="true">
-                        <HeaderContent>
-                            <MudTh>File</MudTh>
-                            <MudTh>Size (bytes)</MudTh>
-                            <MudTh>File Id</MudTh>
-                        </HeaderContent>
-                        <RowTemplate>
-                            <MudTd DataLabel="File">@context.FileName</MudTd>
-                            <MudTd DataLabel="Size">@context.SizeBytes</MudTd>
-                            <MudTd DataLabel="File Id">@context.FileId</MudTd>
-                        </RowTemplate>
-                    </MudTable>
-                }
-            </MudExpansionPanel>
-
-            <MudExpansionPanel Text="History">
-                <MudStack Row AlignItems="AlignItems.Center" Spacing="1">
-                    <MudSpacer/>
-                    <MudButton Variant="Variant.Outlined" Color="Color.Default" OnClick="ClearHistoryAsync"
-                               Disabled="@(isBusy || history.Count == 0)" EndIcon="@Icons.Material.Filled.History">
-                        Clear History
-                    </MudButton>
-                </MudStack>
 
                 <MudExpansionPanels>
-                    @foreach (var h in history)
-                    {
-                        <MudExpansionPanel>
-                            <TitleContent>
-                                <MudToolBar>
-                                    <MudText>@h.Timestamp.ToString("yyyy-MM-dd HH:mm:ss"):</MudText>
-                                    <MudText Class="ml-2">@string.Join(", ", h.FileNames)</MudText>
-                                    <MudText Class="ml-2">@(
-                                                          !string.IsNullOrWhiteSpace(h.SchemaValidationErrors) ? "Schema invalid" :
-                                                          !string.IsNullOrWhiteSpace(h.SubmissionError) ? "Error" :
-                                                          !string.IsNullOrWhiteSpace(h.ResponseJson) ? "Success" : "Blank"
-                                                          )</MudText>
-                                    <MudText Class="ml-2">$@h.Details?.EstimatedCostUsd</MudText>
-                                    <MudText Class="ml-2">@h.Details?.Model</MudText>
-                                    <MudText Class="ml-2">@(h.Details?.LatencyMs)ms</MudText>
-                                    
-                                    <MudSpacer/>
-                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
-                                                   OnClick="@(() => DeleteHistoryAsync(h.Id))"/>
-                                </MudToolBar>
-                            </TitleContent>
-                            <ChildContent>
-                                <MudPaper Class="pa-3 my-2">
-                                    <MudText Typo="Typo.subtitle2">Prompt</MudText>
-                                    <pre style="white-space:pre-wrap; margin:0">@h.Prompt</pre>
-
-                                    <MudText Typo="Typo.subtitle2" Class="mt-2">Schema</MudText>
-                                    <pre style="white-space:pre-wrap; margin:0">@Pretty(h.Schema)</pre>
-
-                                    @if (!string.IsNullOrWhiteSpace(h.SchemaValidationErrors))
-                                    {
-                                        <MudAlert Severity="Severity.Warning" Class="mt-2" Elevation="0">
-                                            <pre style="white-space:pre-wrap; margin:0">@h.SchemaValidationErrors</pre>
-                                        </MudAlert>
-                                    }
-
-                                    @if (!string.IsNullOrWhiteSpace(h.SubmissionError))
-                                    {
-                                        <MudAlert Severity="Severity.Error" Class="mt-2" Elevation="0">
-                                            <pre style="white-space:pre-wrap; margin:0">@Pretty(h.SubmissionError)</pre>
-                                        </MudAlert>
-                                    }
-
-                                    @if (h.Details is not null)
-                                    {
-                                        <MudDivider Class="my-2" />
-                                        <MudText Typo="Typo.subtitle2">Run details</MudText>
-                                        <MudStack>
-                                            <MudText>Model: @h.Details.Model</MudText>
-                                            <MudText>Tokens: in @h.Details.InputTokens • out @h.Details.OutputTokens • total @h.Details.TotalTokens</MudText>
-                                            <MudText>Latency: @h.Details.LatencyMs ms</MudText>
-                                            <MudText>Est. cost (USD): @h.Details.EstimatedCostUsd.ToString("0.00000")</MudText>
-                                        </MudStack>
-                                    }
-
-                                    @if (h.Usage is not null)
-                                    {
-                                        <MudText Typo="Typo.subtitle2" Class="mt-2">Usage</MudText>
-                                        <MudText>Input: @h.Usage.InputTokens, Output: @h.Usage.OutputTokens, Total: @h.Usage.TotalTokens</MudText>
-                                    }
-
-                                    @if (h.Files is not null && h.Files.Count > 0)
-                                    {
-                                        <MudText Typo="Typo.subtitle2" Class="mt-2">Files</MudText>
-                                        <MudTable Items="h.Files" Dense="true" Hover="true">
-                                            <HeaderContent>
-                                                <MudTh>File</MudTh>
-                                                <MudTh>Size (bytes)</MudTh>
-                                                <MudTh>File Id</MudTh>
-                                            </HeaderContent>
-                                            <RowTemplate>
-                                                <MudTd DataLabel="File">@context.FileName</MudTd>
-                                                <MudTd DataLabel="Size">@context.SizeBytes</MudTd>
-                                                <MudTd DataLabel="File Id">@context.FileId</MudTd>
-                                            </RowTemplate>
-                                        </MudTable>
-                                    }
-
-                                    @if (!string.IsNullOrWhiteSpace(h.ResponseJson))
-                                    {
-                                        <MudText Typo="Typo.subtitle2" Class="mt-2">Response</MudText>
-                                        <MudPaper Class="pa-2">
-                                            <pre style="white-space:pre-wrap; margin:0">@Pretty(h.ResponseJson)</pre>
-                                        </MudPaper>
-                                    }
-                                </MudPaper>
-                            </ChildContent>
-                        </MudExpansionPanel>
-                    }
+                    <MudExpansionPanel Text="Preview File/s">
+                        <DocumentPreview Files="files" Height="75vh"/>
+                    </MudExpansionPanel>
                 </MudExpansionPanels>
-            </MudExpansionPanel>
-        </MudExpansionPanels>
-    </MudStack>
+            </ChildContent>
+        </MudExpansionPanel>
+        
+        <MudToolBar WrapContent Class="mt-2" Gutters="false">
+            <MudButton Color="Color.Success" Variant="Variant.Filled" OnClick="@SendExtractRequestAsync"
+                       Disabled="@(files.Count == 0 || isBusy)" EndIcon="@Icons.Material.Filled.Send">
+                GO!
+            </MudButton>
+
+            <MudButton Color="Color.Error" Variant="Variant.Outlined" OnClick="@CancelRequest"
+                       Disabled="@(!CanCancel)" StartIcon="@Icons.Material.Filled.Cancel">
+                Cancel
+            </MudButton>
+        </MudToolBar>
+
+        @if (isBusy)
+        {
+            <MudProgressCircular Indeterminate Color="Color.Primary" Size="Size.Large" Class="mt-2 mb-2"/>
+        }
+
+        <MudText Typo="Typo.h6">Response</MudText>
+
+        @if (error.IsNotNullOrEmpty() || data.IsNotNullOrEmpty())
+        {
+            <LatestResultPanel
+                Error="@error"
+                Data="@data"
+                Details="lastDetails"
+                Usage="lastUsage"
+                Files="lastFiles"/>
+        }
+
+        <MudExpansionPanel Text="History">
+            <HistoryComponent Busy="isBusy"/>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+
 </MudContainer>
 
 @code {
-    [Inject] ApiService Api { get; set; } = default!;
-    [Inject] HistoryService History { get; set; } = default!;
-    [Inject] ILocalStorageService LocalStorage { get; set; } = default!;
+    [Inject] ApiService Api { get; set; } = null!;
+    [Inject] HistoryService History { get; set; } = null!;
+    [Inject] ILocalStorageService LocalStorage { get; set; } = null!;
+
+    [CascadingParameter] public Action ToggleDark { get; set; } = null!;
 
     MudFileUpload<IReadOnlyList<IBrowserFile>>? fileUpload;
     const string DefaultDragClass = "relative rounded-lg border-2 border-dashed pa-4 mt-4 mud-width-full mud-height-full";
@@ -286,16 +143,12 @@
     void ClearDragClass() => dragClass = DefaultDragClass;
 
     readonly List<IBrowserFile> files = new();
-    IBrowserFile? FirstFile => files.FirstOrDefault();
-
-    enum PreviewType { None, Pdf, Image, Text, Unsupported }
 
     List<string> models = [];
     string? selectedModel;
 
     protected override async Task OnInitializedAsync()
     {
-        history = (await History.GetAllAsync()).ToList();
         selectedModel = await LocalStorage.GetItemAsStringAsync("SelectedModel");
         await LoadModels();
         if (string.IsNullOrWhiteSpace(selectedModel) && models.Count > 0)
@@ -303,21 +156,13 @@
         await LocalStorage.SetItemAsStringAsync("SelectedModel", selectedModel ?? string.Empty);
     }
 
-    async Task LoadModels()
-    {
-        models = await Api.GetModelsAsync();
-    }
+    async Task LoadModels() => models = await Api.GetModelsAsync();
 
     async Task OnSelectedModelChanged(string? value)
     {
         selectedModel = value;
         await LocalStorage.SetItemAsStringAsync("SelectedModel", selectedModel ?? string.Empty);
     }
-
-    PreviewType preview = PreviewType.None;
-    string? previewDataUrl;
-    string? previewText;
-    string? previewMessage;
 
     string prompt = string.Empty;
     string? schema;
@@ -332,81 +177,12 @@
     Usage? lastUsage;
     FileProvenance[]? lastFiles;
 
-    List<HistoryEntry> history = new();
-
     async Task OnInputFilesChanged(InputFileChangeEventArgs e)
     {
         ClearDragClass();
         files.Clear();
         files.AddRange(e.GetMultipleFiles());
-        await BuildPreviewAsync(FirstFile);
-    }
-
-    async Task BuildPreviewAsync(IBrowserFile? file)
-    {
-        if (file is null)
-        {
-            preview = PreviewType.None;
-            previewDataUrl = previewText = previewMessage = null;
-            StateHasChanged();
-            return;
-        }
-
-        using var ms = new MemoryStream();
-        await file.OpenReadStream().CopyToAsync(ms);
-        var bytes = ms.ToArray();
-
-        var ct = file.ContentType.Trim();
-        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
-
-        if (ct == "application/pdf" || ext == ".pdf")
-        {
-            preview = PreviewType.Pdf;
-            previewDataUrl = "data:application/pdf;base64," + Convert.ToBase64String(bytes);
-            previewText = previewMessage = null;
-        }
-        else if (ct.StartsWith("image/"))
-        {
-            preview = PreviewType.Image;
-            previewDataUrl = $"data:{ct};base64,{Convert.ToBase64String(bytes)}";
-            previewText = previewMessage = null;
-        }
-        else if (IsTextLike(ct, ext))
-        {
-            preview = PreviewType.Text;
-            previewText = DecodeText(bytes);
-            previewDataUrl = previewMessage = null;
-        }
-        else
-        {
-            preview = PreviewType.Unsupported;
-            previewDataUrl = previewText = null;
-            previewMessage = $"Cannot preview {ext} files in the browser. They will still be sent for extraction.";
-        }
-
         StateHasChanged();
-    }
-
-    static bool IsTextLike(string? contentType, string ext) =>
-        (contentType?.StartsWith("text/") ?? false) ||
-        contentType is "application/json" or "application/xml" ||
-        ext is ".json" or ".xml" or ".csv" or ".txt";
-
-    static string DecodeText(byte[] bytes)
-    {
-        try { return Encoding.UTF8.GetString(bytes); }
-        catch { return "(unable to decode as UTF-8)"; }
-    }
-
-    static string Pretty(string? s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return s ?? "";
-        try
-        {
-            using var doc = JsonDocument.Parse(s);
-            return JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
-        }
-        catch { return s; }
     }
 
     void ClearResult()
@@ -423,8 +199,6 @@
         files.Clear();
         if (fileUpload is not null) await fileUpload.ClearAsync();
 
-        preview = PreviewType.None;
-        previewDataUrl = previewText = previewMessage = null;
         prompt = string.Empty;
         schema = null;
         ClearResult();
@@ -432,11 +206,17 @@
 
     void CancelRequest()
     {
-        try { requestCts?.Cancel(); }
-        catch (Exception ex) { Console.WriteLine(ex.Message); }
+        try
+        {
+            requestCts?.Cancel();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
     }
 
-    async Task SendAsync()
+    async Task SendExtractRequestAsync()
     {
         if (files.Count == 0 || requestCts is not null) return;
 
@@ -464,8 +244,8 @@
                 return;
             }
 
-            var fileParts = new List<FilePart>(this.files.Count);
-            foreach (var f in this.files)
+            var fileParts = new List<FilePart>(files.Count);
+            foreach (var f in files)
             {
                 using var ms = new MemoryStream();
                 await f.OpenReadStream().CopyToAsync(ms, ct);
@@ -536,20 +316,6 @@
     async Task PushHistoryAsync(HistoryEntry e)
     {
         await History.AddAsync(e);
-        history = (await History.GetAllAsync()).ToList();
-        StateHasChanged();
-    }
-
-    async Task ClearHistoryAsync()
-    {
-        await History.ClearAsync();
-        history.Clear();
-    }
-
-    async Task DeleteHistoryAsync(Guid id)
-    {
-        await History.DeleteAsync(id);
-        history = (await History.GetAllAsync()).ToList();
         StateHasChanged();
     }
 
@@ -589,6 +355,7 @@
                     errors = "'required' must only contain strings.";
                     return false;
                 }
+
                 requiredNames.Add(item.GetString()!);
             }
 
@@ -616,4 +383,5 @@
             return false;
         }
     }
+
 }

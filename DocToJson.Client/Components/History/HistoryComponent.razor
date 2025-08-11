@@ -1,0 +1,43 @@
+<MudStack Row AlignItems="AlignItems.Center" Spacing="1">
+    <MudSpacer/>
+    <MudButton Variant="Variant.Outlined" Color="Color.Default"
+               Disabled="@(_items.Count == 0 || Busy)"
+               OnClick="@ClearAll"
+               EndIcon="@Icons.Material.Filled.History">
+        Clear History
+    </MudButton>
+</MudStack>
+
+<MudExpansionPanels>
+    @foreach (var h in _items)
+    {
+        <HistoryItem HistoryEntry="h" OnDelete="Delete" />
+    }
+</MudExpansionPanels>
+
+@code {
+    [Parameter] public bool Busy { get; set; }
+    
+    [Inject] HistoryService History { get; set; } = default!;
+
+    List<HistoryEntry> _items = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _items = (await History.GetAllAsync()).ToList();
+    }
+    
+    async Task ClearAll()
+    {
+        await History.ClearAsync();
+        _items.Clear();
+    }
+    
+    async Task Delete(Guid id)
+    {
+        await History.DeleteAsync(id);
+        var i = _items.FindIndex(x => x.Id == id);
+        if (i >= 0) _items.RemoveAt(i);
+    }
+
+}

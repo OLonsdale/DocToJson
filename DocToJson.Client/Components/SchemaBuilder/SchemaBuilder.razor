@@ -1,51 +1,65 @@
-@using System.Text.Json
-@using System.Text.Json.Nodes
-@using Blazored.LocalStorage
-@using MudBlazor
-@inject ILocalStorageService LocalStorage
-@inject IDialogService Dialog
-@inject ISnackbar Snackbar
-
 <MudExpansionPanels MultiExpansion>
     <MudExpansionPanel Text="Build Schema" Expanded>
         <MudSwitch T="bool"
-                   Value="@(ForceStrict)"
-                   ValueChanged="@((bool v) => { ForceStrict = v; RequestBuild(); })"
+                   Value="@(forceStrict)"
+                   ValueChanged="@((bool v) =>
+                                 {
+                                     forceStrict = v;
+                                     RequestBuild();
+                                 })"
                    Color="Color.Primary"
                    Label="Force strict (Output will have all of the below, and nothing but the below)"/>
 
-        <MudButtonGroup Class="my-2">
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" EndIcon="@Icons.Material.Filled.Add" OnClick="AddField">Add Field</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Secondary" EndIcon="@Icons.Material.Filled.AutoAwesome" OnClick="AddExamples">Add Examples</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Info" EndIcon="@Icons.Material.Filled.UploadFile" OnClick="OpenImportDialog">Import / Derive</MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Error" EndIcon="@Icons.Material.Filled.ClearAll" OnClick="ClearAll">Clear All</MudButton>
+        <MudButtonGroup OverrideStyles="false" Class="my-2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" EndIcon="@Icons.Material.Filled.Add"
+                       OnClick="AddField">Add Field
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" EndIcon="@Icons.Material.Filled.AutoAwesome"
+                       OnClick="AddExamples">Add Examples
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" EndIcon="@Icons.Material.Filled.UploadFile"
+                       OnClick="OpenImportDialog">Import / Derive
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" EndIcon="@Icons.Material.Filled.ClearAll"
+                       OnClick="ClearAll">Clear All
+            </MudButton>
         </MudButtonGroup>
 
         <SchemaNodeEditor Nodes="Fields"
                           Depth="0"
-                          ForceStrict="ForceStrict"
+                          ForceStrict="forceStrict"
                           OnChange="RequestBuild"
-                          />
+        />
+        
+        @if (!preview.IsNullOrWhiteSpace())
+        {
+            <MudExpansionPanels>
+                <MudExpansionPanel Expanded Text="Preview Schema">
+                    <CollapsiblePre Text="@HelperStaticMethods.PrettyJson(preview)" />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
     </MudExpansionPanel>
 
-    <MudExpansionPanel Expanded Text="Preview">
-        <pre style="white-space:pre-wrap; margin:0">@Preview</pre>
-    </MudExpansionPanel>
 </MudExpansionPanels>
 
 @code {
     [Parameter] public string? Value { get; set; }
     [Parameter] public EventCallback<string?> ValueChanged { get; set; }
 
-    // -------- Local storage keys --------
-    const string LS_Key_Fields = "pdfpoc_schema_fields";
-    const string LS_Key_Strict = "pdfpoc_schema_strict";
+    [Inject] ILocalStorageService LocalStorage { set; get; } = null!;
+    [Inject] IDialogService Dialog { set; get; } = null!;
+    [Inject] ISnackbar Snackbar { set; get; } = null!;
 
+    // -------- Local storage keys --------
+    const string LsKeyFields = $"{Statics.ProjectName}_schema_fields";
+    const string LsKeyStrict = $"{Statics.ProjectName}_schema_strict";
+    
     // -------- State --------
-    bool ForceStrict = true;
-    public List<Field> Fields { get; set; } = new();
-    string Preview = "";
-    CancellationTokenSource? _buildCts;
+    bool forceStrict = true;
+    public List<Field> Fields { get; set; } = [];
+    string preview = "";
+    CancellationTokenSource? buildCts;
 
     protected override async Task OnInitializedAsync()
     {
@@ -63,34 +77,39 @@
     void AddExamples()
     {
         Fields.Clear();
-        Fields.AddRange(new[]
-        {
+        Fields.AddRange([
             new Field { Name = "property", Required = true, Type = "string" },
             new Field { Name = "check_in", Required = true, Type = "date-time" },
             new Field { Name = "check_out", Required = true, Type = "date-time" },
-            new Field { Name = "guests", Required = true, Type = "object", Children = new()
+            new Field
             {
-                new Field { Name = "count", Required = true, Type = "number" },
-                new Field { Name = "names", Required = true, Type = "array<string>" }
-            }},
+                Name = "guests", Required = true, Type = "object", Children =
+                [
+                    new Field { Name = "count", Required = true, Type = "number" },
+                    new Field { Name = "names", Required = true, Type = "array<string>" }
+                ]
+            },
             new Field { Name = "confirmation_code", Required = true, Type = "string" },
             new Field { Name = "address", Required = true, Type = "string" },
             new Field { Name = "host", Required = false, Type = "string" },
-            new Field { Name = "amount_paid", Required = true, Type = "object", Children = new()
+            new Field
             {
-                new Field { Name = "currency_code", Required = true, Type = "string" },
-                new Field { Name = "currency_amount", Required = true, Type = "number" },
-                new Field { Name = "price_per_night", Required = false, Type = "number" }
-            }},
+                Name = "amount_paid", Required = true, Type = "object", Children =
+                [
+                    new Field { Name = "currency_code", Required = true, Type = "string" },
+                    new Field { Name = "currency_amount", Required = true, Type = "number" },
+                    new Field { Name = "price_per_night", Required = false, Type = "number" }
+                ]
+            },
             new Field { Name = "notes", Required = false, Type = "string" }
-        });
+        ]);
         RequestBuild();
     }
 
     void ClearAll()
     {
         Fields.Clear();
-        Preview = "";
+        preview = "";
         _ = ValueChanged.InvokeAsync(null);
         _ = SaveToLocalStorage();
         StateHasChanged();
@@ -127,12 +146,13 @@
             if (LooksLikeSchema(root))
             {
                 // Import JSON Schema
-                ForceStrict = root.TryGetProperty("additionalProperties", out var ap) && ap.ValueKind == JsonValueKind.False;
+                forceStrict = root.TryGetProperty("additionalProperties", out var ap) && ap.ValueKind == JsonValueKind.False;
 
                 var requiredSet = new HashSet<string>(StringComparer.Ordinal);
                 if (root.TryGetProperty("required", out var reqEl) && reqEl.ValueKind == JsonValueKind.Array)
                     foreach (var r in reqEl.EnumerateArray())
-                        if (r.ValueKind == JsonValueKind.String) requiredSet.Add(r.GetString()!);
+                        if (r.ValueKind == JsonValueKind.String)
+                            requiredSet.Add(r.GetString()!);
 
                 if (!root.TryGetProperty("properties", out var propsEl) || propsEl.ValueKind != JsonValueKind.Object)
                     return false;
@@ -147,7 +167,7 @@
                 if (derived.Count == 0) return false;
 
                 Fields = derived;
-                ForceStrict = true;
+                forceStrict = true;
                 return true;
             }
         }
@@ -171,8 +191,8 @@
         return root.ValueKind switch
         {
             JsonValueKind.Object => InferObjectFields(root),
-            JsonValueKind.Array  => new List<Field>
-            {
+            JsonValueKind.Array =>
+            [
                 new Field
                 {
                     Name = "items",
@@ -180,14 +200,14 @@
                     Type = InferArrayType(root, out var itemChildren),
                     Children = itemChildren
                 }
-            },
-            _ => new List<Field> { new Field { Name = "value", Type = GuessScalarType(root), Required = true } }
+            ],
+            _ => [new Field { Name = "value", Type = GuessScalarType(root), Required = true }]
         };
     }
 
     static string InferArrayType(JsonElement arrEl, out List<Field> itemChildren)
     {
-        itemChildren = new();
+        itemChildren = [];
         var items = arrEl.EnumerateArray().Take(20).ToList();
         if (items.Count == 0) return "array<string>";
 
@@ -196,11 +216,13 @@
             itemChildren = UnionObjectFields(items);
             return "array<object>";
         }
+
         if (items.All(i => i.ValueKind == JsonValueKind.String))
         {
             var allDt = items.All(i => LooksLikeIsoDate(i.GetString()));
             return allDt ? "array<date-time>" : "array<string>";
         }
+
         if (items.All(i => i.ValueKind == JsonValueKind.Number)) return "array<number>";
         if (items.All(i => i.ValueKind is JsonValueKind.True or JsonValueKind.False)) return "array<boolean>";
 
@@ -234,7 +256,7 @@
                         Name = name,
                         Type = t,
                         Required = true,
-                        Children = (t == "array<object>") ? itemChildren : new()
+                        Children = (t == "array<object>") ? itemChildren : []
                     });
                     break;
 
@@ -243,6 +265,7 @@
                     break;
             }
         }
+
         return fields;
     }
 
@@ -282,6 +305,7 @@
                             cur.Type = t;
                             cur.Children.Clear();
                         }
+
                         break;
 
                     default:
@@ -291,6 +315,7 @@
                 }
             }
         }
+
         return map.Values.ToList();
     }
 
@@ -316,6 +341,7 @@
                 map[f.Name] = f;
             }
         }
+
         return map.Values.ToList();
     }
 
@@ -340,8 +366,10 @@
             "array<number>", "array<boolean>", "array<date-time>", "array<string>",
             "number", "boolean", "date-time", "string"
         ];
-        int ia = Array.IndexOf(rank, a); if (ia < 0) ia = rank.Length - 1;
-        int ib = Array.IndexOf(rank, b); if (ib < 0) ib = rank.Length - 1;
+        int ia = Array.IndexOf(rank, a);
+        if (ia < 0) ia = rank.Length - 1;
+        int ib = Array.IndexOf(rank, b);
+        if (ib < 0) ib = rank.Length - 1;
         return ia <= ib ? a : b;
     }
 
@@ -362,7 +390,8 @@
                 {
                     case "string":
                         f.Type = (def.TryGetProperty("format", out var fmt) && fmt.GetString() == "date-time")
-                            ? "date-time" : "string";
+                            ? "date-time"
+                            : "string";
                         break;
 
                     case "number":
@@ -386,7 +415,8 @@
                                     var childReq = new HashSet<string>(StringComparer.Ordinal);
                                     if (items.TryGetProperty("required", out var r2) && r2.ValueKind == JsonValueKind.Array)
                                         foreach (var r in r2.EnumerateArray())
-                                            if (r.ValueKind == JsonValueKind.String) childReq.Add(r.GetString()!);
+                                            if (r.ValueKind == JsonValueKind.String)
+                                                childReq.Add(r.GetString()!);
 
                                     if (items.TryGetProperty("properties", out var childProps) && childProps.ValueKind == JsonValueKind.Object)
                                         f.Children = ParseFieldsFromSchema(childProps, childReq);
@@ -419,6 +449,7 @@
                         {
                             f.Type = "array<string>";
                         }
+
                         break;
 
                     case "object":
@@ -426,7 +457,8 @@
                         var childReq2 = new HashSet<string>(StringComparer.Ordinal);
                         if (def.TryGetProperty("required", out var r3) && r3.ValueKind == JsonValueKind.Array)
                             foreach (var r in r3.EnumerateArray())
-                                if (r.ValueKind == JsonValueKind.String) childReq2.Add(r.GetString()!);
+                                if (r.ValueKind == JsonValueKind.String)
+                                    childReq2.Add(r.GetString()!);
 
                         if (def.TryGetProperty("properties", out var childProps2) && childProps2.ValueKind == JsonValueKind.Object)
                             f.Children = ParseFieldsFromSchema(childProps2, childReq2);
@@ -440,20 +472,29 @@
 
             list.Add(f);
         }
+
         return list;
     }
-
-    void RequestBuild() => RequestBuild(200);
+    
     // -------- Build JSON Schema --------
-    void RequestBuild(int delayMs = 200)
+    void RequestBuild()
     {
-        _buildCts?.Cancel();
-        _buildCts = new CancellationTokenSource();
-        var token = _buildCts.Token;
+        int delayMs = 200;
+        buildCts?.Cancel();
+        buildCts = new CancellationTokenSource();
+        var token = buildCts.Token;
 
         _ = Task.Run(async () =>
         {
-            try { await Task.Delay(delayMs, token); } catch { return; }
+            try
+            {
+                await Task.Delay(delayMs, token);
+            }
+            catch
+            {
+                return;
+            }
+
             if (token.IsCancellationRequested) return;
             await InvokeAsync(SafeBuild);
         }, token);
@@ -466,14 +507,16 @@
             Build();
             _ = SaveToLocalStorage();
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     void Build()
     {
         if (Fields.All(f => string.IsNullOrWhiteSpace(f.Name)))
         {
-            Preview = "";
+            preview = "";
             _ = ValueChanged.InvokeAsync(null);
             return;
         }
@@ -489,11 +532,11 @@
         if (required.Count > 0)
             schema["required"] = new JsonArray(required.Select(r => (JsonNode)r).ToArray());
 
-        if (ForceStrict)
+        if (forceStrict)
             schema["additionalProperties"] = false;
 
-        Preview = schema.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-        _ = ValueChanged.InvokeAsync(Preview);
+        preview = schema.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        _ = ValueChanged.InvokeAsync(preview);
     }
 
     JsonObject BuildProperties(List<Field> fields, out List<string> requiredList)
@@ -509,7 +552,7 @@
             if (!props.ContainsKey(f.Name))
                 props[f.Name] = node;
 
-            if (ForceStrict || f.Required)
+            if (forceStrict || f.Required)
                 req.Add(f.Name);
         }
 
@@ -531,7 +574,7 @@
                 };
                 if (childReq.Count > 0)
                     obj["required"] = new JsonArray(childReq.Select(r => (JsonNode)r).ToArray());
-                if (ForceStrict)
+                if (forceStrict)
                     obj["additionalProperties"] = false;
                 return obj;
             }
@@ -546,7 +589,7 @@
                 };
                 if (childReq.Count > 0)
                     itemObj["required"] = new JsonArray(childReq.Select(r => (JsonNode)r).ToArray());
-                if (ForceStrict)
+                if (forceStrict)
                     itemObj["additionalProperties"] = false;
 
                 return new JsonObject
@@ -592,37 +635,44 @@
     {
         try
         {
-            var strict = await LocalStorage.GetItemAsync<bool?>(LS_Key_Strict);
-            if (strict.HasValue) ForceStrict = strict.Value;
+            var strict = await LocalStorage.GetItemAsync<bool?>(LsKeyStrict);
+            if (strict.HasValue) forceStrict = strict.Value;
 
-            var stored = await LocalStorage.GetItemAsStringAsync(LS_Key_Fields);
+            var stored = await LocalStorage.GetItemAsStringAsync(LsKeyFields);
             if (!string.IsNullOrWhiteSpace(stored))
-                Fields = JsonSerializer.Deserialize<List<Field>>(stored) ?? new();
+                Fields = JsonSerializer.Deserialize<List<Field>>(stored) ?? [];
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     async Task SaveToLocalStorage()
     {
         try
         {
-            await LocalStorage.SetItemAsync(LS_Key_Strict, ForceStrict);
-            await LocalStorage.SetItemAsStringAsync(LS_Key_Fields, JsonSerializer.Serialize(Fields));
+            await LocalStorage.SetItemAsync(LsKeyStrict, forceStrict);
+            await LocalStorage.SetItemAsStringAsync(LsKeyFields, JsonSerializer.Serialize(Fields));
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     // -------- Model --------
     public class Field
     {
         public string Name { get; set; } = "";
+
         public bool Required { get; set; }
+
         // "string" | "date-time" | "number" | "boolean" | "object" |
         // "array<string>" | "array<date-time>" | "array<number>" | "array<boolean>" | "array<object>"
         public string Type { get; set; } = "string";
-        public List<Field> Children { get; set; } = new();
+        public List<Field> Children { get; set; } = [];
 
         // UI state for recursion
         public bool ShowChildren { get; set; } = true;
     }
+
 }

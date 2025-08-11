@@ -1,0 +1,215 @@
+@using MudBlazor
+@using System.Text
+
+<MudStack Spacing="1">
+    @if (!string.IsNullOrWhiteSpace(Label))
+    {
+        <MudText Typo="Typo.subtitle2">@Label</MudText>
+    }
+
+    <div class="cp-wrap">
+        @if (CanToggle)
+        {
+            <MudIconButton Class="cp-toggle"
+                           Icon="@(Expanded ? CollapseIcon : ExpandIcon)"
+                           Size="Size.Small"
+                           OnClick="Toggle" />
+        }
+        <pre class="@PreClass" style="@PreStyle">@((MarkupString)RenderedHtml)</pre>
+    </div>
+</MudStack>
+
+@code {
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public int CollapsedLines { get; set; } = 20;
+    [Parameter] public bool StartExpanded { get; set; }
+    [Parameter] public bool Wrap { get; set; } = true;
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string ExpandIcon { get; set; } = Icons.Material.Filled.UnfoldMore;
+    [Parameter] public string CollapseIcon { get; set; } = Icons.Material.Filled.UnfoldLess;
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? Style { get; set; }
+
+    [Parameter] public string? Language { get; set; } = null; // set "json" to highlight
+
+    bool Expanded { get; set; }
+    bool _init;
+
+    int LineCount => string.IsNullOrEmpty(Text) ? 0 : (Text!.Count(c => c == '\n') + 1);
+    bool CanToggle => LineCount > CollapsedLines;
+
+    protected override void OnParametersSet()
+    {
+        if (!_init)
+        {
+            Expanded = StartExpanded;
+            if (Text?.First() == '{')
+            {
+                Language = "json";
+            }
+            _init = true;
+        }
+    }
+
+    void Toggle() => Expanded = !Expanded;
+
+    string PreClass => string.IsNullOrWhiteSpace(Class) ? "cp-pre" : $"cp-pre {Class}";
+
+    string PreStyle
+    {
+        get
+        {
+            var s =
+                $"font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;" +
+                $"width:100%;" +
+                $"line-height:1.4;" +
+                $"white-space:{(Wrap ? "pre-wrap" : "pre")};" +
+                $"overflow:auto;";
+            if (!Expanded) s += $"max-height: calc({CollapsedLines} * 1lh);";
+            if (!string.IsNullOrWhiteSpace(Style)) s += (s.EndsWith(";") ? "" : ";") + Style;
+            return s;
+        }
+    }
+
+    string RenderedHtml =>
+        string.Equals(Language, "json", StringComparison.OrdinalIgnoreCase)
+            ? HighlightJson(Text ?? "")
+            : HtmlEncode(Text ?? "");
+
+    static string HtmlEncode(string s) =>
+        s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    string HighlightJson(string s)
+    {
+        try
+        {
+            var sb = new StringBuilder(s.Length * 2);
+            var ctx = new Stack<char>();        // 'O' object, 'A' array
+            var expectKey = new Stack<bool>();  // only for 'O'
+
+            int i = 0, n = s.Length;
+            while (i < n)
+            {
+                char c = s[i];
+
+                if (char.IsWhiteSpace(c)) { sb.Append(c); i++; continue; }
+
+                if (c == '{')
+                {
+                    sb.Append("<span class=\"json-punc\">{</span>");
+                    ctx.Push('O'); expectKey.Push(true);
+                    i++; continue;
+                }
+                if (c == '}')
+                {
+                    sb.Append("<span class=\"json-punc\">}</span>");
+                    if (ctx.Count > 0 && ctx.Peek() == 'O') { ctx.Pop(); expectKey.Pop(); }
+                    else if (ctx.Count > 0) ctx.Pop();
+                    i++; continue;
+                }
+                if (c == '[')
+                {
+                    sb.Append("<span class=\"json-punc\">[</span>");
+                    ctx.Push('A'); i++; continue;
+                }
+                if (c == ']')
+                {
+                    sb.Append("<span class=\"json-punc\">]</span>");
+                    if (ctx.Count > 0) ctx.Pop();
+                    i++; continue;
+                }
+                if (c == ',')
+                {
+                    sb.Append("<span class=\"json-punc\">,</span>");
+                    if (ctx.Count > 0 && ctx.Peek() == 'O') { expectKey.Pop(); expectKey.Push(true); }
+                    i++; continue;
+                }
+                if (c == ':')
+                {
+                    sb.Append("<span class=\"json-punc\">:</span>");
+                    if (ctx.Count > 0 && ctx.Peek() == 'O') { expectKey.Pop(); expectKey.Push(false); }
+                    i++; continue;
+                }
+                if (c == '"')
+                {
+                    int start = ++i;
+                    bool esc = false;
+                    while (i < n)
+                    {
+                        var ch = s[i++];
+                        if (esc) { esc = false; continue; }
+                        if (ch == '\\') { esc = true; continue; }
+                        if (ch == '"') break;
+                    }
+                    int end = i - 1;
+                    var content = s.Substring(start, end - start);
+
+                    bool isKey = ctx.Count > 0 && ctx.Peek() == 'O' && expectKey.Peek();
+                    sb.Append("<span class=\"json-punc\">\"</span>");
+                    sb.Append("<span class=\"").Append(isKey ? "json-key" : "json-string").Append("\">")
+                      .Append(HtmlEncode(content)).Append("</span>");
+                    sb.Append("<span class=\"json-punc\">\"</span>");
+                    continue;
+                }
+                if (c == '-' || char.IsDigit(c))
+                {
+                    int start = i;
+                    if (c == '-') i++;
+                    while (i < n && char.IsDigit(s[i])) i++;
+                    if (i < n && s[i] == '.') { i++; while (i < n && char.IsDigit(s[i])) i++; }
+                    if (i < n && (s[i] == 'e' || s[i] == 'E'))
+                    {
+                        i++;
+                        if (i < n && (s[i] == '+' || s[i] == '-')) i++;
+                        while (i < n && char.IsDigit(s[i])) i++;
+                    }
+                    var num = s.Substring(start, i - start);
+                    sb.Append("<span class=\"json-number\">").Append(HtmlEncode(num)).Append("</span>");
+                    continue;
+                }
+                if (Matches(s, i, "true") || Matches(s, i, "false"))
+                {
+                    var lit = s.Substring(i, s[i + 1] == 'r' ? 4 : 5);
+                    sb.Append("<span class=\"json-bool\">").Append(lit).Append("</span>");
+                    i += lit.Length; continue;
+                }
+                if (Matches(s, i, "null"))
+                {
+                    sb.Append("<span class=\"json-null\">null</span>");
+                    i += 4; continue;
+                }
+
+                sb.Append(HtmlEncode(c.ToString()));
+                i++;
+            }
+            return sb.ToString();
+
+            static bool Matches(string str, int idx, string token)
+                => idx + token.Length <= str.Length && string.CompareOrdinal(str, idx, token, 0, token.Length) == 0;
+        }
+        catch
+        {
+            return HtmlEncode(s);
+        }
+    }
+}
+
+<style>
+.cp-wrap { position: relative; }
+.cp-toggle { position: absolute; top: .25rem; right: .25rem; z-index: 1; }
+.cp-pre {
+    margin: 0;
+    padding: .5rem;
+    background: var(--mud-palette-surface);
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 4px;
+}
+
+/* Minimal theme using Mud palette vars */
+.cp-pre .json-key    { color: var(--mud-palette-info); font-weight: 500; }
+.cp-pre .json-string { color: var(--mud-palette-success); }
+.cp-pre .json-number { color: var(--mud-palette-warning); }
+.cp-pre .json-bool   { color: var(--mud-palette-primary); }
+.cp-pre .json-null   { color: var(--mud-palette-error); opacity: .9; }
+.cp-pre .json-punc   { color: var(--mud-palette-text-secondary); }
+</style>

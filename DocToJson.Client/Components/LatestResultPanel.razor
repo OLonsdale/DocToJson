@@ -1,0 +1,59 @@
+
+<MudExpansionPanel Expanded Text="Latest Result">
+    @if (!string.IsNullOrEmpty(Error))
+    {
+        <MudAlert Severity="Severity.Error" Elevation="0">
+            <CollapsiblePre Text="@HelperStaticMethods.PrettyJson(Error)" />
+        </MudAlert>
+    }
+
+    @if (!string.IsNullOrEmpty(Data))
+    {
+        <MudPaper Elevation="0" Class="pa-2 mt-2">
+            <CollapsiblePre Text="@HelperStaticMethods.PrettyJson(Data)" />
+        </MudPaper>
+    }
+
+    @if (Details is not null)
+    {
+        <MudDivider Class="my-2"/>
+        <MudText Typo="Typo.subtitle2">Run details</MudText>
+        <MudStack>
+            <MudText>Model: @Details.Model</MudText>
+            <MudText>Tokens: in @Details.InputTokens • out @Details.OutputTokens • total @Details.TotalTokens</MudText>
+            <MudText>Latency: @Details.LatencyMs ms</MudText>
+            <MudText>Est. cost (USD): @Details.EstimatedCostUsd.ToString("0.00000")</MudText>
+        </MudStack>
+    }
+
+    @if (Usage is not null)
+    {
+        <MudText Typo="Typo.subtitle2" Class="mt-2">Usage</MudText>
+        <MudText>Input: @Usage.InputTokens, Output: @Usage.OutputTokens, Total: @Usage.TotalTokens</MudText>
+    }
+
+    @if (Files is not null && Files.Length > 0)
+    {
+        <MudText Typo="Typo.subtitle2" Class="mt-2">Files</MudText>
+        <MudTable Items="Files" Dense Hover>
+            <HeaderContent>
+                <MudTh>File</MudTh>
+                <MudTh>Size (bytes)</MudTh>
+                <MudTh>File Id</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="File">@context.FileName</MudTd>
+                <MudTd DataLabel="Size">@context.SizeBytes</MudTd>
+                <MudTd DataLabel="File Id">@context.FileId</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudExpansionPanel>
+
+@code {
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public string? Data { get; set; }
+    [Parameter] public RunDetails? Details { get; set; }
+    [Parameter] public Usage? Usage { get; set; }
+    [Parameter] public FileProvenance[]? Files { get; set; }
+}

@@ -1,15 +1,20 @@
 @inherits LayoutComponentBase
 
-<MudThemeProvider IsDarkMode />
+<MudThemeProvider @bind-IsDarkMode="dark" />
 <MudPopoverProvider/>
 <MudDialogProvider/>
 <MudSnackbarProvider/>
 
 <MudLayout>
-    @* <MudMainContent > *@
-        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="pa-4">
+    <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="pa-4">
+        <CascadingValue Value="(Action)(() => dark = !dark)">
             @Body
-        </MudContainer>
-    @* </MudMainContent> *@
+        </CascadingValue>
+    </MudContainer>
 </MudLayout>
 
+@code {
+    
+    bool dark = true;
+    
+}

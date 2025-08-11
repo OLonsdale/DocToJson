@@ -7,7 +7,7 @@ using System.Text.Json;
 
 public sealed class HistoryService(ILocalStorageService storage)
 {
-    const string Key = "pdfpoc_history";
+    const string Key = $"{Statics.ProjectName}_history";
     static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     readonly ILocalStorageService _storage = storage;
