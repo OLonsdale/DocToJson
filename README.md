@@ -2,7 +2,9 @@
 
 ## Overview
 
-This application allows you to upload one or more files and send them to ChatGPT for extraction into a structured JSON format.
+This application allows you to upload one or more files and send them to a variety of OpenAI models for extraction into a structured JSON format.
+
+It returns a rough cost in USD, along with token counts etc.
 
 If you provide a JSON Schema, the model can be forced to conform to it exactly.
 
@@ -22,11 +24,10 @@ Dotnet 9 Blazor Wasm front-end, MudBlazor for UI components, and traditional bac
 
 Requires the backend server, as files cannot be sent directly from Blazor WebAssembly to OpenAI.
 
-Uses Open AI gpt-4.1-mini model. In testing, 21 requests were made, costing "less than $0.01" in total.
-
 Supports uploading multiple files in a single request to produce one combined JSON document.
 
-Includes an in-app JSON Schema builder for defining or editing output structure.
+Includes an in-app JSON Schema builder for defining or editing output structure. 
+This can take a JSON document to create a schema automatically, and supports arbritrerally deep documents.
 
 Stores schema and request history in browser Local Storage.
 
